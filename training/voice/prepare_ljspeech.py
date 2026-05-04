@@ -66,14 +66,22 @@ def hf_rows(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
     kwargs: dict[str, Any] = {"split": args.hf_split}
     if args.hf_config:
         kwargs["name"] = args.hf_config
-    if args.trust_remote_code:
-        kwargs["trust_remote_code"] = True
     token = args.hf_token or os.getenv("HF_TOKEN")
 
-    try:
-        dataset = load_dataset(args.hf_dataset, **kwargs, token=token)
-    except TypeError:
-        dataset = load_dataset(args.hf_dataset, **kwargs, use_auth_token=token)
+    def _load(**extra):
+        try:
+            return load_dataset(args.hf_dataset, **kwargs, token=token, **extra)
+        except TypeError:
+            return load_dataset(args.hf_dataset, **kwargs, use_auth_token=token, **extra)
+
+    if args.trust_remote_code:
+        try:
+            dataset = _load(trust_remote_code=True)
+        except (ValueError, TypeError):
+            # Newer datasets versions removed trust_remote_code support; retry without it.
+            dataset = _load()
+    else:
+        dataset = _load()
 
     dataset = dataset.cast_column(args.hf_audio_column, Audio(sampling_rate=None))
     if args.max_samples:
