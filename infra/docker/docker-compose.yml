@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    env_file:
+      - ../../.env
+    ports:
+      - "8080:8080"
+    volumes:
+      - afiyet-data:/data
+    environment:
+      DATA_DIR: /data
+
+  voice-agent:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.voice-agent
+    env_file:
+      - ../../.env
+    ports:
+      - "8081:8081"
+    depends_on:
+      - api
+    environment:
+      ORDER_API_BASE_URL: http://api:8080
+
+volumes:
+  afiyet-data:

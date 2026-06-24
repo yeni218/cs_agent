@@ -1,0 +1,6 @@
+{
+  "default": ["/content/voice_refs/default.wav"],
+  "warm_greeting": ["/content/voice_refs/warm_greeting.wav"],
+  "apologetic_repair": ["/content/voice_refs/apologetic_repair.wav"],
+  "clear_recap": ["/content/voice_refs/clear_recap.wav"]
+}

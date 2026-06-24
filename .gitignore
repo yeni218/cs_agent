@@ -9,6 +9,12 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 
+# Python virtualenvs
+venv/
+.venv/
+venv311/
+env/
+
 models/
 runs/
 artifacts/

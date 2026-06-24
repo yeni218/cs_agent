@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Afiyet AI | Sipariş Paneli</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Afiyet AI</p>
+      <h1>Sipariş Paneli</h1>
+    </div>
+    <div class="status" id="connectionStatus">
+      <span class="dot"></span>
+      <span>Bağlanıyor</span>
+    </div>
+  </header>
+
+  <section class="metrics" aria-label="Sipariş özeti">
+    <article>
+      <span>Toplam</span>
+      <strong id="statTotal">0</strong>
+    </article>
+    <article>
+      <span>Aktif</span>
+      <strong id="statActive">0</strong>
+    </article>
+    <article>
+      <span>Tamamlanan</span>
+      <strong id="statCompleted">0</strong>
+    </article>
+    <article>
+      <span>Gelir</span>
+      <strong id="statRevenue">0 TL</strong>
+    </article>
+  </section>
+
+  <main>
+    <div class="section-head">
+      <h2>Siparişler</h2>
+      <div class="tabs" id="filters">
+        <button class="active" data-filter="all">Tümü</button>
+        <button data-filter="building">Oluşturuluyor</button>
+        <button data-filter="confirmed">Onaylandı</button>
+        <button data-filter="preparing">Hazırlanıyor</button>
+        <button data-filter="ready">Hazır</button>
+      </div>
+    </div>
+    <div class="orders" id="orders"></div>
+  </main>
+
+  <button class="agent-launcher" id="agentLauncher" type="button" aria-label="Afiyet agent ile konuş">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 13a8 8 0 0 1 16 0" />
+      <path d="M4 13v3a2 2 0 0 0 2 2h1v-7H6a2 2 0 0 0-2 2Z" />
+      <path d="M20 13v3a2 2 0 0 1-2 2h-1v-7h1a2 2 0 0 1 2 2Z" />
+      <path d="M17 18c0 2-2 3-5 3" />
+      <path d="M10 21h4" />
+    </svg>
+  </button>
+
+  <section class="agent-panel" id="agentPanel" aria-label="Afiyet agent" hidden>
+    <div class="agent-head">
+      <div>
+        <strong>Afiyet Agent</strong>
+        <span id="agentStatus">Hazır</span>
+      </div>
+      <button id="agentClose" class="icon-button" type="button" aria-label="Paneli kapat">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="agent-messages" id="agentMessages"></div>
+    <div class="agent-controls">
+      <button id="agentMic" class="mic-button" type="button" aria-label="Konuş">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+          <path d="M12 19v3" />
+        </svg>
+      </button>
+      <input id="agentInput" type="text" autocomplete="off" placeholder="Mesaj yazın">
+      <button id="agentSend" class="send-button" type="button" aria-label="Gönder">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m22 2-7 20-4-9-9-4Z" />
+          <path d="M22 2 11 13" />
+        </svg>
+      </button>
+    </div>
+  </section>
+
+  <div class="toasts" id="toasts"></div>
+  <script src="/dashboard.js"></script>
+</body>
+</html>
