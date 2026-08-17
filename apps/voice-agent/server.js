@@ -5,13 +5,15 @@ import fastifyWebsocket from '@fastify/websocket';
 import twilio from 'twilio';
 import { transferToHuman } from './handoff.js';
 import { createAgentSession } from '../../packages/domain/session-factory.js';
-import { GroqLlmProvider } from '../../packages/providers/groq-llm.js';
-import { GroqSttProvider } from '../../packages/providers/groq-stt.js';
+import { createLlmProvider } from '../../packages/providers/llm-factory.js';
+import { createSttProvider } from '../../packages/providers/stt-factory.js';
 import { OrderApiClient } from '../../packages/providers/order-api-client.js';
 import { createTtsProvider } from '../../packages/providers/tts-provider.js';
 import { mulawToPcm16 } from '../../packages/voice-core/mulaw.js';
 import { EnergyTurnDetector } from '../../packages/voice-core/turn-detector.js';
 import { SemanticEndpointer } from '../../packages/voice-core/semantic-endpointer.js';
+import { splitIntoSpeechChunks } from '../../packages/voice-core/speech-chunker.js';
+import { normalizeForSpeech } from '../../packages/voice-core/text-normalize.js';
 import { CallMetrics } from '../../packages/voice-core/metrics.js';
 import { sendClear, sendMulawAudio } from '../../packages/voice-core/twilio-playback.js';
 
@@ -22,8 +24,8 @@ const fastify = Fastify({ logger: true });
 await fastify.register(fastifyFormbody);
 await fastify.register(fastifyWebsocket);
 
-const stt = new GroqSttProvider();
-const llm = new GroqLlmProvider();
+const stt = createSttProvider();
+const llm = createLlmProvider();
 const tts = createTtsProvider();
 const orderClient = new OrderApiClient();
 const activeCalls = new Map();
@@ -226,15 +228,36 @@ fastify.register(async function registerMediaStream(app) {
       await speak(result.text);
     }
 
+    // Stream the reply sentence-by-sentence: synthesize and start playing the
+    // first chunk while later ones are still being synthesized. This cuts
+    // time-to-first-audio from "the whole paragraph" to "the first clause" and
+    // gives barge-in a clean seam — if the caller starts talking, the
+    // generation counter advances and we stop before the next chunk.
     async function speak(text) {
       if (!text?.trim()) return;
 
       const generation = ++assistantGeneration;
-      const audio = await metrics.time('tts', () => tts.synthesizeMulaw(text));
-      if (!audio || generation !== assistantGeneration) return;
+      const chunks = splitIntoSpeechChunks(normalizeForSpeech(text));
+      const speakStartedAt = Date.now();
+      let totalChunksSent = 0;
+      let firstAudioSent = false;
 
-      const chunksSent = sendMulawAudio(socket, streamSid, audio);
-      fastify.log.info({ streamSid, chunksSent }, 'Assistant audio sent');
+      for (const chunk of chunks) {
+        if (generation !== assistantGeneration) break; // barged in — abandon rest
+        const audio = await metrics.time('tts', () => tts.synthesizeMulaw(chunk));
+        if (generation !== assistantGeneration) break; // barged in during synth
+        if (!audio) continue;
+
+        if (!firstAudioSent) {
+          metrics.record('ttfa', Date.now() - speakStartedAt);
+          firstAudioSent = true;
+        }
+        totalChunksSent += sendMulawAudio(socket, streamSid, audio);
+      }
+
+      if (totalChunksSent) {
+        fastify.log.info({ streamSid, chunksSent: totalChunksSent }, 'Assistant audio sent');
+      }
     }
   });
 });

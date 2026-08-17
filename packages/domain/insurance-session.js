@@ -1,6 +1,7 @@
 import { INSURANCE_TOOL_DEFINITIONS, createInsuranceToolExecutor } from './insurance-tools.js';
 import { INSURANCE_SYSTEM_PROMPT } from './insurance-prompts.js';
 import { DialogueOrchestrator } from './dialogue-orchestrator.js';
+import { takeSpeechChunks } from '../voice-core/speech-chunker.js';
 
 // Insurance equivalent of AgentSession. Same conversation loop, but wired to
 // the PoliServis tools and prompt. The deterministic dialogue orchestrator
@@ -80,6 +81,55 @@ export class InsuranceSession {
       text: 'Talebinizi aldım. Sizi bir temsilcimize aktarayım mı?',
       transfer: this.transferRequested
     };
+  }
+
+  // Streaming turn: emits complete sentences via onSentence(text) as the LLM
+  // generates them, so the caller can synthesize/speak the first sentence before
+  // the whole reply exists. Deterministic handoff still runs first. Tools are not
+  // driven here — the tool loop stays on the non-streaming processUserText path.
+  async processUserTextStream(userText, onSentence) {
+    this.audit_({ type: 'user_turn', text: userText });
+
+    const directive = this.orchestrator.inspect(userText);
+    if (directive.type === 'handoff') {
+      this.transferRequested = true;
+      this.messages.push({ role: 'user', content: userText });
+      this.messages.push({ role: 'assistant', content: directive.message });
+      this.audit_({ type: 'handoff', reason: directive.reason });
+      this.audit_({ type: 'assistant_turn', text: directive.message });
+      await onSentence(directive.message);
+      return { text: directive.message, transfer: true, reason: directive.reason };
+    }
+
+    this.messages.push({ role: 'user', content: userText });
+    this.trimConversation();
+
+    let full = '';
+    if (typeof this.llm.completeStream === 'function') {
+      let buffer = '';
+      await this.llm.completeStream({
+        messages: this.messages,
+        onToken: async (delta) => {
+          full += delta;
+          buffer += delta;
+          const { chunks, rest } = takeSpeechChunks(buffer);
+          buffer = rest;
+          for (const chunk of chunks) await onSentence(chunk);
+        }
+      });
+      if (buffer.trim()) await onSentence(buffer.trim());
+    } else {
+      // Provider without streaming: generate once, then emit as chunks.
+      const message = await this.llm.complete({ messages: this.messages });
+      full = message.content || '';
+      const { chunks, rest } = takeSpeechChunks(full);
+      for (const chunk of chunks) await onSentence(chunk);
+      if (rest.trim()) await onSentence(rest.trim());
+    }
+
+    this.messages.push({ role: 'assistant', content: full });
+    this.audit_({ type: 'assistant_turn', text: full });
+    return { text: full, transfer: this.transferRequested };
   }
 
   trimConversation() {

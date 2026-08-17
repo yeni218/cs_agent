@@ -1,0 +1,18 @@
+[
+  {
+    "id": "t_lezzet",
+    "name": "Lezzet Restoran",
+    "status": "active",
+    "phoneNumber": "+902121112233",
+    "plan": { "name": "Pro", "monthlyPrice": 299, "includedMinutes": 1000 },
+    "assistantIds": ["PUT-YOUR-VAPI-ASSISTANT-ID-HERE"]
+  },
+  {
+    "id": "t_kebap",
+    "name": "Kebapçı Ali",
+    "status": "active",
+    "phoneNumber": "+903124445566",
+    "plan": { "name": "Başlangıç", "monthlyPrice": 149, "includedMinutes": 400 },
+    "assistantIds": ["ANOTHER-VAPI-ASSISTANT-ID"]
+  }
+]

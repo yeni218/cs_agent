@@ -11,11 +11,7 @@ const state = {
     source: null,
     silenceGain: null,
     playbackSource: null,
-    currentAudioBase64: '',
-    currentAudioDuration: 0,
-    playbackStartedAt: 0,
-    pausedAudioBase64: '',
-    pausedAudioOffset: 0,
+    audioQueue: [],
     lastAssistantText: '',
     listening: false,
     busy: false,
@@ -286,6 +282,11 @@ function handleRealtimeAgentMessage(message) {
       resumeAssistantAudio();
       break;
 
+    case 'clear_audio':
+      // New turn starting — drop any audio still queued from the previous reply.
+      stopAssistantAudio();
+      break;
+
     case 'transcript':
       appendAgentMessage('user', message.text);
       setAgentStatus('Düşünüyor');
@@ -298,7 +299,7 @@ function handleRealtimeAgentMessage(message) {
       break;
 
     case 'assistant_audio':
-      playMulawAudio(message.audio);
+      enqueueAssistantAudio(message.audio, message.format || 'ulaw_8000');
       break;
 
     case 'tts_unavailable':
@@ -356,7 +357,10 @@ async function startMicrophone() {
         socket.send(JSON.stringify({ type: 'interrupt' }));
       }
 
-      const pcm16 = downsampleToPcm16(input, audioContext.sampleRate, 8000);
+      // 16 kHz (not 8 kHz telephony) — Whisper works at 16 kHz internally, so
+      // this keeps the high-frequency band where Turkish sibilants (ş, s, f, h)
+      // live, which markedly improves recognition.
+      const pcm16 = downsampleToPcm16(input, audioContext.sampleRate, 16000);
       if (pcm16.byteLength > 0) {
         socket.send(JSON.stringify({
           type: 'audio',
@@ -430,76 +434,71 @@ function appendAgentMessage(role, message) {
   root.scrollTop = root.scrollHeight;
 }
 
-function playMulawAudio(base64Audio, offsetSeconds = 0) {
+function ensureAudioContext() {
+  const ctx = state.agent.audioContext || new AudioContext();
+  state.agent.audioContext = ctx;
+  // Autoplay policy starts a callback-created context "suspended"; the user
+  // already gestured (clicking start), so resume() is permitted.
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+// Queue a streamed sentence for gapless back-to-back playback. The agent streams
+// its reply one sentence at a time, so we buffer and play them in order instead
+// of letting each clip cut off the previous one.
+function enqueueAssistantAudio(base64Audio, format = 'ulaw_8000') {
   if (!base64Audio) return;
-  stopAssistantAudio();
-
-  const pcm = decodeMulawBase64(base64Audio);
-  const audioContext = state.agent.audioContext || new AudioContext({ sampleRate: 8000 });
-  state.agent.audioContext = audioContext;
-
-  const buffer = audioContext.createBuffer(1, pcm.length, 8000);
+  const { pcm, sampleRate } = decodeAssistantAudio(base64Audio, format);
+  const ctx = ensureAudioContext();
+  const buffer = ctx.createBuffer(1, pcm.length, sampleRate);
   buffer.copyToChannel(pcm, 0);
-
-  const source = audioContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audioContext.destination);
-  source.onended = () => {
-    if (state.agent.playbackSource === source) {
-      state.agent.playbackSource = null;
-      state.agent.playing = false;
-      state.agent.currentAudioBase64 = '';
-      state.agent.currentAudioDuration = 0;
-      state.agent.playbackStartedAt = 0;
-      setAgentStatus(state.agent.listening ? 'Dinliyorum' : 'Hazır');
-    }
-  };
-
-  const startOffset = Math.min(Math.max(0, offsetSeconds), Math.max(0, buffer.duration - 0.05));
-  state.agent.playbackSource = source;
-  state.agent.currentAudioBase64 = base64Audio;
-  state.agent.currentAudioDuration = buffer.duration;
-  state.agent.playbackStartedAt = audioContext.currentTime - startOffset;
-  state.agent.pausedAudioBase64 = '';
-  state.agent.pausedAudioOffset = 0;
-  state.agent.playing = true;
-  source.start(0, startOffset);
+  state.agent.audioQueue = state.agent.audioQueue || [];
+  state.agent.audioQueue.push(buffer);
+  if (!state.agent.playbackSource) playNextInQueue();
 }
 
-function pauseAssistantAudio() {
-  const agent = state.agent;
-  const source = agent.playbackSource;
-  if (!source) {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-    agent.playing = false;
-    return;
-  }
-
-  const currentTime = agent.audioContext?.currentTime || 0;
-  const elapsed = Math.max(0, currentTime - agent.playbackStartedAt);
-  const remaining = Math.max(0, agent.currentAudioDuration - elapsed);
-  const canResume = agent.currentAudioBase64 && remaining > 0.25;
-
-  if (canResume) {
-    agent.pausedAudioBase64 = agent.currentAudioBase64;
-    agent.pausedAudioOffset = Math.min(elapsed, agent.currentAudioDuration);
-  }
-
-  stopAssistantAudio({ preservePaused: canResume });
-}
-
-function resumeAssistantAudio() {
-  const { pausedAudioBase64, pausedAudioOffset } = state.agent;
-  if (!pausedAudioBase64) {
+function playNextInQueue() {
+  const ctx = state.agent.audioContext;
+  const buffer = (state.agent.audioQueue || []).shift();
+  if (!ctx || !buffer) {
+    state.agent.playbackSource = null;
+    state.agent.playing = false;
     setAgentStatus(state.agent.listening ? 'Dinliyorum' : 'Hazır');
     return;
   }
-
-  playMulawAudio(pausedAudioBase64, pausedAudioOffset);
-  setAgentStatus('Konuşuyor');
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.onended = () => {
+    if (state.agent.playbackSource === source) {
+      state.agent.playbackSource = null;
+      playNextInQueue();
+    }
+  };
+  state.agent.playbackSource = source;
+  state.agent.playing = true;
+  source.start();
 }
 
-function stopAssistantAudio({ preservePaused = false } = {}) {
+// Brief hold during a *suspected* interruption — suspend the context but keep the
+// queue so a false alarm can resume seamlessly.
+function pauseAssistantAudio() {
+  const ctx = state.agent.audioContext;
+  if (ctx && ctx.state === 'running') ctx.suspend();
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  state.agent.playing = false;
+}
+
+function resumeAssistantAudio() {
+  const ctx = state.agent.audioContext;
+  if (ctx && ctx.state === 'suspended') ctx.resume();
+  const busy = state.agent.playbackSource || (state.agent.audioQueue || []).length;
+  state.agent.playing = !!busy;
+  setAgentStatus(busy ? 'Konuşuyor' : (state.agent.listening ? 'Dinliyorum' : 'Hazır'));
+}
+
+// Full stop (confirmed barge-in / new turn): drop the queue and current clip.
+function stopAssistantAudio() {
   const source = state.agent.playbackSource;
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   if (source) {
@@ -509,14 +508,8 @@ function stopAssistantAudio({ preservePaused = false } = {}) {
     } catch {}
   }
   state.agent.playbackSource = null;
+  state.agent.audioQueue = [];
   state.agent.playing = false;
-  state.agent.currentAudioBase64 = '';
-  state.agent.currentAudioDuration = 0;
-  state.agent.playbackStartedAt = 0;
-  if (!preservePaused) {
-    state.agent.pausedAudioBase64 = '';
-    state.agent.pausedAudioOffset = 0;
-  }
 }
 
 function speakBrowserFallback(text) {
@@ -588,6 +581,25 @@ function arrayBufferToBase64(buffer) {
   let binary = '';
   for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
+}
+
+// Decodes assistant audio into { pcm: Float32Array, sampleRate }, supporting the
+// full-quality browser path (pcm16_<rate>, e.g. Piper's native 22050 Hz) and the
+// telephony path (ulaw_8000).
+function decodeAssistantAudio(base64Audio, format = 'ulaw_8000') {
+  const binary = atob(base64Audio);
+  if (format && format.startsWith('pcm16_')) {
+    const sampleRate = parseInt(format.slice(6), 10) || 22050;
+    const len = binary.length >> 1;
+    const pcm = new Float32Array(len);
+    for (let i = 0; i < len; i += 1) {
+      let sample = (binary.charCodeAt(i * 2 + 1) << 8) | binary.charCodeAt(i * 2);
+      if (sample >= 0x8000) sample -= 0x10000; // signed 16-bit LE
+      pcm[i] = sample / 32768;
+    }
+    return { pcm, sampleRate };
+  }
+  return { pcm: decodeMulawBase64(base64Audio), sampleRate: 8000 };
 }
 
 function decodeMulawBase64(base64Audio) {

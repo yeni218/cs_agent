@@ -25,3 +25,17 @@ voice_refs/
 *.flac
 *.pth
 *.safetensors
+
+# TTS voices / ONNX models (large binaries)
+*.onnx
+*.onnx.json
+voices/
+
+# Expo build output / caches
+dist/
+.expo/
+web-build/
+
+# local-stack runtime logs
+*.log
+*.err

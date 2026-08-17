@@ -8,9 +8,10 @@ import { fileURLToPath } from 'url';
 import { DEFAULT_MENU } from '../../packages/domain/menu.js';
 import { createAgentSession } from '../../packages/domain/session-factory.js';
 import { OrderService } from '../../packages/domain/order-service.js';
-import { GroqLlmProvider } from '../../packages/providers/groq-llm.js';
-import { GroqSttProvider } from '../../packages/providers/groq-stt.js';
+import { createLlmProvider } from '../../packages/providers/llm-factory.js';
+import { createSttProvider } from '../../packages/providers/stt-factory.js';
 import { createTtsProvider } from '../../packages/providers/tts-provider.js';
+import { normalizeForSpeech } from '../../packages/voice-core/text-normalize.js';
 import { createOrderStore } from '../../packages/storage/order-store-factory.js';
 import { EnergyTurnDetector } from '../../packages/voice-core/turn-detector.js';
 
@@ -204,6 +205,24 @@ function registerBrowserRealtimeAgent(app, service) {
         greeting: session.getGreetingText()
       });
 
+      // Warm the filler cache now so the first turn's acknowledgement is instant.
+      getFillerPayloads().catch(() => {});
+
+      // Play a cached acknowledgement immediately (masks STT+LLM latency).
+      async function playFiller(turnGen) {
+        if (process.env.BROWSER_AGENT_FILLER === 'false') return;
+        let fillers;
+        try {
+          fillers = await getFillerPayloads();
+        } catch {
+          return;
+        }
+        if (!fillers.length || turnGen !== generation) return;
+        const filler = fillers[Math.floor(Math.random() * fillers.length)];
+        sendSocket(socket, { type: 'status', status: 'speaking' });
+        sendSocket(socket, { type: 'assistant_audio', ...filler });
+      }
+
       socket.on('message', (raw) => {
         handleRealtimeMessage(raw).catch((error) => {
           request.log.error({ error }, 'Realtime agent message failed');
@@ -260,16 +279,24 @@ function registerBrowserRealtimeAgent(app, service) {
       async function processUtterance(audio) {
         processing = true;
         try {
+          // New turn: drop any queued audio from the previous reply, then play
+          // an instant filler while STT runs.
+          const turnGen = ++generation;
+          sendSocket(socket, { type: 'clear_audio' });
           sendSocket(socket, { type: 'status', status: 'transcribing' });
+          await playFiller(turnGen);
+
           const text = await getBrowserAgentStt().transcribePcm16(audio);
+          request.log.info({ bytes: audio.length, heard: text }, 'STT utterance');
           if (!text || text.length < 2) {
             sendSocket(socket, { type: 'status', status: 'listening' });
             emitFalseInterruption();
             return;
           }
+          if (turnGen !== generation) return; // caller barged in during STT
           clearFalseInterruption();
           sendSocket(socket, { type: 'transcript', text });
-          await processText(text);
+          await processText(text, turnGen);
         } finally {
           processing = false;
           if (pendingUtterance) {
@@ -280,39 +307,71 @@ function registerBrowserRealtimeAgent(app, service) {
         }
       }
 
-      async function processText(text) {
+      async function processText(text, existingGen) {
         clearFalseInterruption();
-        const responseGeneration = ++generation;
+        // Reuse the generation from processUtterance (which already played the
+        // filler); the text-chat path has none, so it bumps and clears here.
+        const responseGeneration = existingGen != null ? existingGen : ++generation;
+        if (existingGen == null) sendSocket(socket, { type: 'clear_audio' });
         sendSocket(socket, { type: 'status', status: 'thinking' });
 
-        const result = await session.processUserText(text);
+        const ttsProvider = getBrowserAgentTts();
+        let spokeAny = false;
+        let ttsFailed = false;
+
+        // Synthesize and stream one sentence as soon as it's ready. The
+        // generation check makes this a barge-in seam: if the caller starts
+        // talking, later sentences are dropped.
+        const speakSentence = async (sentence) => {
+          if (responseGeneration !== generation) return;
+          const speakText = normalizeForSpeech(sentence);
+          if (!speakText) return;
+          try {
+            let payload = null;
+            if (typeof ttsProvider.synthesizePcm === 'function') {
+              const native = await ttsProvider.synthesizePcm(speakText);
+              if (native?.pcm?.length) {
+                payload = { audio: native.pcm.toString('base64'), format: `pcm16_${native.sampleRate}` };
+              }
+            } else {
+              const audio = await ttsProvider.synthesizeMulaw(speakText);
+              if (audio) payload = { audio: audio.toString('base64'), format: 'ulaw_8000' };
+            }
+            if (payload && responseGeneration === generation) {
+              if (!spokeAny) {
+                sendSocket(socket, { type: 'status', status: 'speaking' });
+                spokeAny = true;
+              }
+              sendSocket(socket, { type: 'assistant_audio', ...payload });
+            }
+          } catch (error) {
+            if (!ttsFailed) {
+              ttsFailed = true;
+              sendSocket(socket, { type: 'tts_unavailable', error: explainProviderError(error) });
+            }
+          }
+        };
+
+        let result;
+        try {
+          if (typeof session.processUserTextStream === 'function') {
+            result = await session.processUserTextStream(text, speakSentence);
+          } else {
+            result = await session.processUserText(text);
+            if (result.text) await speakSentence(result.text);
+          }
+        } catch (error) {
+          sendSocket(socket, { type: 'error', error: explainProviderError(error) });
+          return;
+        }
+
+        // Full transcript for the on-screen panel (audio already streamed above).
         sendSocket(socket, {
           type: 'assistant_text',
           text: result.text,
           transfer: result.transfer,
           orderId: result.orderId
         });
-
-        if (!result.text || responseGeneration !== generation) return;
-
-        sendSocket(socket, { type: 'status', status: 'speaking' });
-        let audio = null;
-        try {
-          audio = await getBrowserAgentTts().synthesizeMulaw(result.text);
-        } catch (error) {
-          sendSocket(socket, {
-            type: 'tts_unavailable',
-            error: explainProviderError(error)
-          });
-          return;
-        }
-        if (audio && responseGeneration === generation) {
-          sendSocket(socket, {
-            type: 'assistant_audio',
-            audio: audio.toString('base64'),
-            format: 'ulaw_8000'
-          });
-        }
       }
 
       function scheduleFalseInterruption() {
@@ -364,18 +423,48 @@ function getBrowserAgentSession(service, { sessionId, callerNumber }) {
 }
 
 function getBrowserAgentLlm() {
-  if (!browserAgentLlm) browserAgentLlm = new GroqLlmProvider();
+  if (!browserAgentLlm) browserAgentLlm = createLlmProvider();
   return browserAgentLlm;
 }
 
 function getBrowserAgentStt() {
-  if (!browserAgentStt) browserAgentStt = new GroqSttProvider();
+  if (!browserAgentStt) browserAgentStt = createSttProvider();
   return browserAgentStt;
 }
 
 function getBrowserAgentTts() {
   if (!browserAgentTts) browserAgentTts = createTtsProvider();
   return browserAgentTts;
+}
+
+// Short spoken acknowledgements ("bir saniye", "tabii") synthesized once and
+// cached. Played the instant the caller's turn ends — before STT/LLM even run —
+// so the agent feels responsive on slow hardware instead of dead-silent for
+// several seconds. Disable with BROWSER_AGENT_FILLER=false.
+const FILLER_TEXTS = (process.env.BROWSER_AGENT_FILLERS || 'Tabii.|Bir saniye.|Bakıyorum.')
+  .split('|')
+  .map((s) => s.trim())
+  .filter(Boolean);
+let fillerCache = null;
+async function getFillerPayloads() {
+  if (fillerCache) return fillerCache;
+  const tts = getBrowserAgentTts();
+  const out = [];
+  for (const text of FILLER_TEXTS) {
+    try {
+      if (typeof tts.synthesizePcm === 'function') {
+        const n = await tts.synthesizePcm(text);
+        if (n?.pcm?.length) out.push({ audio: n.pcm.toString('base64'), format: `pcm16_${n.sampleRate}` });
+      } else {
+        const a = await tts.synthesizeMulaw(text);
+        if (a) out.push({ audio: a.toString('base64'), format: 'ulaw_8000' });
+      }
+    } catch {
+      // best-effort; skip a filler that fails to synthesize
+    }
+  }
+  fillerCache = out;
+  return fillerCache;
 }
 
 function createLocalOrderClient(service) {

@@ -1,0 +1,10 @@
+{
+  "name": "e2e-sis-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Vapi-shaped API stub — the seam to bypass Vapi with the sovereign cascade.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" }
+}

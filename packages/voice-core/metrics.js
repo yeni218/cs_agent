@@ -8,7 +8,9 @@ export class CallMetrics {
   constructor({ sessionId = null } = {}) {
     this.sessionId = sessionId;
     this.startedAt = Date.now();
-    this.stages = { stt: [], llm: [], tts: [] };
+    // ttfa = time-to-first-audio: how long after synthesis starts the caller
+    // hears the first sound. The key "does it feel snappy" naturalness metric.
+    this.stages = { stt: [], llm: [], tts: [], ttfa: [] };
     this.counts = { turns: 0, interruptions: 0, falseInterruptions: 0, transfers: 0, errors: 0 };
   }
 
@@ -38,7 +40,8 @@ export class CallMetrics {
       latencyMs: {
         stt: stats(this.stages.stt),
         llm: stats(this.stages.llm),
-        tts: stats(this.stages.tts)
+        tts: stats(this.stages.tts),
+        ttfa: stats(this.stages.ttfa)
       }
     };
   }
