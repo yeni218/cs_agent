@@ -42,6 +42,7 @@ cockpit — same binary, the account decides.
 | `customer/` | **The app** (Expo/React Native). Login → restaurant view *or* admin cockpit by role. (folder name is historical) | ✅ runnable (demo logins) |
 | `backend/` | One brain, two faces: `POST /auth/login` → role; `/customer/*` (COGS stripped) + `/admin/*` (full economics). Source switch: `DATA_SOURCE=demo` \| `vapi` (proxies any Vapi-shaped API). | ✅ auth + tenancy + redaction + proxy |
 | `infra-api/` | **Our own** voice-agent API, **Vapi-compatible** (Groq LLM/STT + Inworld TTS). Point the backend's `VAPI_BASE_URL` here to run on our infra instead of Vapi — swap by base URL only. | ✅ CRUD + engine + cost |
+| `supabase/` | **Backend-less** option: app talks straight to Supabase. Schema + **RLS** + cost-free `customer_calls` view (redaction in the DB) + a `call` Edge Function (Groq + Inworld). Simplest to run. | ✅ schema + RLS + function |
 | `mobile/` | Earlier admin-only prototype — **superseded** by the app's admin role; removable. | legacy |
 | `docs/` | End-to-end + two-sided architecture, swap plan, sovereign cascade design. | ✅ |
 
