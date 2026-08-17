@@ -31,7 +31,15 @@ DATA_SOURCE=vapi VAPI_API_KEY=<your_vapi_private_key> npm start
 | Customer | `GET /customer/phone-number` | tenant number |
 | Admin | `GET /admin/overview` · `/admin/tenants` | MRR, COGS, **margins** |
 | Admin | `GET /admin/calls[/:id]` | full `costBreakdown` + transcript |
-| Raw | `GET /assistant[/:id]` · `/call[/:id]` | Vapi-shaped passthrough |
+| Raw | `GET·POST /assistant` · `GET·PATCH·DELETE /assistant/:id` | Vapi-shaped assistant payloads |
+| Raw | `GET·POST /call` · `GET·PATCH·DELETE /call/:id` | Vapi-shaped call payloads |
+| Raw | `GET·POST /phone-number` · `GET·PATCH·DELETE /phone-number/:id` | Vapi-shaped phone/SIP payloads |
+| Raw | `POST /chat` | Vapi-shaped chat request/response passthrough |
+
+The raw layer accepts the same payload style Vapi documents for assistants,
+outbound calls, phone numbers/SIP, and chat. In `DATA_SOURCE=vapi` mode these
+requests are forwarded to `VAPI_BASE_URL`; in demo mode they mutate local sample
+objects so you can test the app without keys.
 
 ## How the mapping works (Vapi → us)
 `src/vapi.js` maps:

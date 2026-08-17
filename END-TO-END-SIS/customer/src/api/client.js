@@ -1,3 +1,5 @@
+import { getSupabaseClient } from './supabase.js';
+
 // Session-aware client. The logged-in session decides scope:
 //   customer → sends x-tenant-id (server returns cost-stripped data)
 //   admin    → sends Bearer token (server returns full economics)
@@ -6,6 +8,10 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.session = session;
     this.demo = demo;
+    this.source = session?.source || (demo ? 'demo' : 'backend');
+    this.supabase = this.source === 'supabase'
+      ? getSupabaseClient({ url: session?.supabaseUrl })
+      : null;
   }
 
   headers() {
@@ -34,4 +40,8 @@ export class ApiClient {
 
   get(path, params = {}) { return this.request('GET', path, { params }); }
   patch(path, body) { return this.request('PATCH', path, { body }); }
+
+  async signOut() {
+    if (this.supabase) await this.supabase.auth.signOut();
+  }
 }

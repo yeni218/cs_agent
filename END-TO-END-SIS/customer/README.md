@@ -29,14 +29,28 @@ npx expo start         # w = web, or scan QR in Expo Go
 Or use the **Hızlı demo girişi** buttons on the login screen.
 
 ### Live logins
-Untick "Demo modu", set Backend URL (default `http://localhost:8787`, run
-`../backend`), and log in with the same accounts. On a phone use your PC's LAN IP.
+Preferred path is direct Supabase:
+
+```bash
+cp .env.example .env
+# set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY
+npx expo start
+```
+
+Untick "Demo modu" and log in with Supabase Auth users linked in
+`public.profiles`. The app reads customer data from `customer_calls`, so customer
+responses do not contain cost columns.
+
+If Supabase env vars are absent, live mode still supports the old backend
+fallback: run `../backend`, keep the URL as `http://localhost:8787`, and log in
+with the same accounts. On a phone use your PC's LAN IP.
 
 ## Structure
 - `src/screens/LoginScreen.js` — single login (customer + admin).
 - customer screens: `HomeScreen`, `OrdersScreen`, `AgentScreen`, `PlanScreen`.
 - admin screens: `AdminHomeScreen` (MRR/margins/tenants/health), `AdminCallsScreen` (cost breakdown).
-- `src/api/client.js` — session-aware; sends `x-tenant-id` (customer) or `Bearer` (admin).
+- `src/api/supabase.js` — direct Supabase client.
+- `src/api/client.js` — session-aware; direct Supabase when configured, backend fallback otherwise.
 - `App.js` — session gate + role-based tabs + logout.
 
 The `../mobile/` app is the earlier admin-only prototype and is now superseded by

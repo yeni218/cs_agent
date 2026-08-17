@@ -5,7 +5,7 @@ const env = (k: string) => Deno.env.get(k) || '';
 const PRICING = {
   llmInPer1k: Number(env('PRICE_LLM_IN_PER_1K') || 0.00059),
   llmOutPer1k: Number(env('PRICE_LLM_OUT_PER_1K') || 0.00079),
-  ttsPer1kChars: Number(env('PRICE_TTS_PER_1K_CHARS') || 0.005),
+  ttsPer1kChars: Number(env('PRICE_TTS_PER_1K_CHARS') || 0.009),
   transportPerSec: Number(env('PRICE_TRANSPORT_PER_SEC') || 0.0000833),
   platformPerCall: Number(env('PRICE_PLATFORM_PER_CALL') || 0.005)
 };
@@ -19,7 +19,7 @@ function computeCost(u: { promptTokens: number; completionTokens: number; ttsCha
   return { stt: 0, llm: r(llm), tts: r(tts), transport: r(transport), platform: r(vapi), total: r(llm + tts + transport + vapi) };
 }
 
-async function groqComplete(messages: any[], model: string, temperature: number, maxTokens: number) {
+async function groqComplete(messages: any[], model: string, temperature: number, maxTokens: number, responseFormat?: any) {
   const key = env('GROQ_API_KEY');
   if (!key) {
     const last = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
@@ -30,7 +30,7 @@ async function groqComplete(messages: any[], model: string, temperature: number,
   }
   const res = await fetch(`${env('GROQ_BASE_URL') || 'https://api.groq.com/openai/v1'}/chat/completions`, {
     method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens })
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, ...(responseFormat ? { response_format: responseFormat } : {}) })
   });
   if (!res.ok) throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const d = await res.json();
@@ -42,11 +42,25 @@ async function inworldTts(text: string, voiceId: string) {
   if (!key) return { chars: text.length, audioBase64: null };
   const res = await fetch(env('INWORLD_TTS_URL') || 'https://api.inworld.ai/tts/v1/voice', {
     method: 'POST', headers: { authorization: `Basic ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ text, voiceId, modelId: env('INWORLD_TTS_MODEL') || 'inworld-tts-1' })
+    body: JSON.stringify({
+      text,
+      voiceId,
+      modelId: env('INWORLD_TTS_MODEL') || 'inworld-tts-1.5-mini',
+      audioConfig: {
+        audioEncoding: env('INWORLD_TTS_AUDIO_ENCODING') || 'MP3',
+        sampleRateHertz: Number(env('INWORLD_TTS_SAMPLE_RATE') || 48000)
+      },
+      language: env('INWORLD_TTS_LANGUAGE') || 'tr-TR',
+      deliveryMode: env('INWORLD_TTS_DELIVERY_MODE') || 'BALANCED',
+      applyTextNormalization: env('INWORLD_TTS_TEXT_NORMALIZATION') || 'ON'
+    })
   });
   if (!res.ok) throw new Error(`Inworld ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const d = await res.json();
-  return { chars: text.length, audioBase64: d.audioContent || d.audio || null };
+  return {
+    chars: d.usage?.processedCharactersCount || d.result?.usage?.processedCharactersCount || text.length,
+    audioBase64: d.audioContent || d.audio || d.result?.audioContent || null
+  };
 }
 
 export async function runTurn(assistant: any, { input }: { input?: string }) {
@@ -66,21 +80,112 @@ export async function runTurn(assistant: any, { input }: { input?: string }) {
     ttsChars += tts.chars;
   }
 
+  const extraction = await extractStructuredData({ input: input || '', assistantText, assistant });
+  promptTokens += extraction.promptTokens;
+  completionTokens += extraction.completionTokens;
+
   const durationSec = Math.max(2, Math.round((Date.now() - started) / 1000));
   const costBreakdown = computeCost({ promptTokens, completionTokens, ttsChars, durationSec });
-  const t = (input || '').toLowerCase();
-  const intent = /sipariş|istiyorum/.test(t) ? 'order' : /rezervasyon/.test(t) ? 'reservation' : input ? 'faq' : 'missed';
+  const structuredData = extraction.data;
+  const intent = structuredData.intent;
   return {
     messages: turns,
     analysis: {
       summary: input ? `Müşteri: ${input}` : 'Görüşme tamamlanamadı',
-      structuredData: intent === 'order' ? { intent, items: input!.split(/[+,]/).map((s) => s.trim()).filter(Boolean), total: 0 } : { intent },
+      structuredData,
       successEvaluation: input ? 'success' : 'failed'
     },
     outcome: intent,
-    orderAmount: 0,
+    orderAmount: Number(structuredData.total) || 0,
     durationSec,
     cost: costBreakdown.total,
     costBreakdown
   };
+}
+
+async function extractStructuredData({ input, assistantText, assistant }: { input: string; assistantText: string; assistant: any }) {
+  const fallback = heuristicStructuredData(input);
+  if (!input || !env('GROQ_API_KEY')) return { data: fallback, promptTokens: 0, completionTokens: 0 };
+
+  const schema = assistant.analysisPlan?.structuredDataSchema || {};
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'Türkçe restoran çağrısından yapılandırılmış veri çıkar.',
+        'Sadece geçerli JSON döndür.',
+        'Alanlar: intent(order|reservation|faq|missed), items(array), total(number), customerName(string|null), currency(string).',
+        'Emin değilsen fallback olarak total 0 ve boş items kullan.',
+        `Şema: ${JSON.stringify(schema)}`
+      ].join(' ')
+    },
+    { role: 'user', content: JSON.stringify({ userText: input, assistantText }) }
+  ];
+
+  try {
+    const llm = await groqComplete(
+      messages,
+      assistant.model?.model || 'llama-3.3-70b-versatile',
+      0,
+      220,
+      { type: 'json_object' }
+    );
+    return {
+      data: normalizeStructuredData({ ...fallback, ...JSON.parse(llm.content || '{}') }, fallback),
+      promptTokens: llm.promptTokens,
+      completionTokens: llm.completionTokens
+    };
+  } catch {
+    return { data: fallback, promptTokens: 0, completionTokens: 0 };
+  }
+}
+
+function heuristicStructuredData(text: string) {
+  const t = text.toLowerCase();
+  const intent = /sipariş|istiyorum|alabilir miyim|gönder|paket|pizza|kebap|lahmacun|menü/.test(t)
+    ? 'order'
+    : /rezervasyon|masa|randevu/.test(t)
+      ? 'reservation'
+      : text
+        ? 'faq'
+        : 'missed';
+  return {
+    intent,
+    items: intent === 'order' ? extractItems(text) : [],
+    total: extractTotal(text),
+    customerName: extractCustomerName(text),
+    currency: 'TRY'
+  };
+}
+
+function normalizeStructuredData(value: any, fallback: any) {
+  const intent = ['order', 'reservation', 'faq', 'missed'].includes(value.intent) ? value.intent : fallback.intent;
+  const items = Array.isArray(value.items)
+    ? value.items.map((x: unknown) => String(x).trim()).filter(Boolean)
+    : fallback.items;
+  const total = Number.isFinite(Number(value.total)) ? Number(value.total) : fallback.total;
+  const customerName = typeof value.customerName === 'string' && value.customerName.trim()
+    ? value.customerName.trim()
+    : fallback.customerName;
+  return { intent, items, total, customerName, currency: value.currency || 'TRY' };
+}
+
+function extractTotal(text: string) {
+  const match = text.match(/(?:toplam|tutar|hesap)?\s*(\d+(?:[.,]\d+)?)\s*(?:tl|₺|lira)/i);
+  return match ? Number(match[1].replace(',', '.')) : 0;
+}
+
+function extractCustomerName(text: string) {
+  const match = text.match(/(?:adım|ismim|ben)\s+([A-ZÇĞİÖŞÜa-zçğıöşü]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğıöşü]{2,})?)/);
+  return match ? match[1].trim() : null;
+}
+
+function extractItems(text: string) {
+  return text
+    .replace(/(?:toplam|tutar|hesap)?\s*\d+(?:[.,]\d+)?\s*(?:tl|₺|lira).*/i, '')
+    .replace(/(?:adım|ismim|ben)\s+[A-ZÇĞİÖŞÜa-zçğıöşü]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğıöşü]{2,})?/gi, '')
+    .replace(/sipariş vermek istiyorum|sipariş istiyorum|istiyorum|alabilir miyim|gönderir misiniz/gi, '')
+    .split(/,|\+| ve /i)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }

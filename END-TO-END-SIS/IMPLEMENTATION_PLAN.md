@@ -18,7 +18,7 @@ touching code. Paths are relative to `END-TO-END-SIS/` unless noted.
 **Repo layout (`END-TO-END-SIS/`):**
 | Dir | What | State |
 |---|---|---|
-| `customer/` | THE app (Expo/React Native). Login → customer view or admin cockpit. Folder name is historical. | ✅ built, runs in demo mode; **still uses `fetch`, not Supabase** |
+| `customer/` | THE app (Expo/React Native). Login → customer view or admin cockpit. Folder name is historical. | ✅ built; direct Supabase adapter added; demo/backend fallback remains |
 | `mobile/` | earlier admin-only prototype | legacy, removable |
 | `backend/` | Node API: `/customer/*` (cost-stripped) + `/admin/*` (full) + `POST /auth/login`. `DATA_SOURCE=demo\|vapi` proxies any Vapi-shaped API. | ✅ built + verified |
 | `infra-api/` | **our own Vapi-compatible API** (Groq LLM/STT + Inworld TTS) with a call engine + cost accounting. Pluggable `Store` (`DB=memory\|postgres`). | ✅ built + verified |
@@ -176,9 +176,9 @@ cost) visible in both customer and admin views.
 
 ## Known gaps / risks
 - `supabase/` SQL has **not been run** against a real Postgres — verify in Phase A.
-- **Inworld** request/response shape unconfirmed — verify against their docs.
-- **Order total extraction** missing (Phase C).
-- App still on `fetch`/mock — not Supabase yet (Phase B).
+- **Inworld** request/response shape has been aligned to current docs, but still needs a real-key smoke test.
+- **Order total extraction** now exists in both engines; still needs real-call QA against messy Turkish orders.
+- App now supports direct Supabase when `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` are set.
 - **Telephony not wired** — web/test calls only (Phase D).
 - `security_invoker=false` on `customer_calls` relies on the view being owned by a
   role that bypasses RLS (Supabase `postgres`) — confirm after migration.

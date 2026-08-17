@@ -19,24 +19,38 @@ export class VapiClient {
     const res = await fetch(`${this.baseUrl}${path}${qs ? `?${qs}` : ''}`, {
       method,
       headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
+      body: body !== undefined ? JSON.stringify(body) : undefined
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
       throw new Error(`Vapi ${res.status} ${path}: ${detail}`.slice(0, 300));
     }
-    return res.json();
+    const text = await res.text();
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { return text; }
   }
 
   listAssistants(params) { return this.req('GET', '/assistant', { params }); }
+  createAssistant(body) { return this.req('POST', '/assistant', { body }); }
   getAssistant(id) { return this.req('GET', `/assistant/${id}`); }
   patchAssistant(id, body) { return this.req('PATCH', `/assistant/${id}`, { body }); }
+  deleteAssistant(id) { return this.req('DELETE', `/assistant/${id}`); }
   listCalls(params) { return this.req('GET', '/call', { params }); }
+  createCall(body) { return this.req('POST', '/call', { body }); }
   getCall(id) { return this.req('GET', `/call/${id}`); }
+  patchCall(id, body) { return this.req('PATCH', `/call/${id}`, { body }); }
+  deleteCall(id) { return this.req('DELETE', `/call/${id}`); }
+  listPhoneNumbers(params) { return this.req('GET', '/phone-number', { params }); }
+  createPhoneNumber(body) { return this.req('POST', '/phone-number', { body }); }
+  getPhoneNumber(id) { return this.req('GET', `/phone-number/${id}`); }
+  patchPhoneNumber(id, body) { return this.req('PATCH', `/phone-number/${id}`, { body }); }
+  deletePhoneNumber(id) { return this.req('DELETE', `/phone-number/${id}`); }
+  createChat(body) { return this.req('POST', '/chat', { body }); }
 }
 
 export function mapAssistant(v, tenantId) {
   return {
+    ...v,
     id: v.id,
     tenantId,
     orgId: v.orgId,

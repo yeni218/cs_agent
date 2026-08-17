@@ -56,6 +56,7 @@ function Root() {
     try { await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch { /* ignore */ }
   };
   const onLogout = async () => {
+    try { await client?.signOut(); } catch { /* ignore */ }
     setSession(null);
     try { await AsyncStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   };

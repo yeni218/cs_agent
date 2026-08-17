@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, ScrollView } from 'react-native';
 import { login, DEMO_HINTS } from '../api/auth.js';
+import { DEFAULT_LIVE_SOURCE } from '../config.js';
 import { theme } from '../components/ui.js';
 
 // Single login. Same screen for restaurants and for us — the account decides
@@ -12,6 +13,8 @@ export default function LoginScreen({ defaultBaseUrl, onLogin }) {
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl || 'http://localhost:8787');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const liveUrlLabel = DEFAULT_LIVE_SOURCE === 'supabase' ? 'Supabase URL' : 'Backend URL';
+  const liveUrlPlaceholder = DEFAULT_LIVE_SOURCE === 'supabase' ? 'https://project.supabase.co' : 'http://localhost:8787';
 
   const submit = async (creds) => {
     const e = creds?.email ?? email;
@@ -48,9 +51,9 @@ export default function LoginScreen({ defaultBaseUrl, onLogin }) {
 
         {!useDemo && (
           <>
-            <Text style={styles.label}>Backend URL</Text>
+            <Text style={styles.label}>{liveUrlLabel}</Text>
             <TextInput style={styles.input} value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none"
-              autoCorrect={false} placeholder="http://localhost:8787" placeholderTextColor={theme.muted} />
+              autoCorrect={false} placeholder={liveUrlPlaceholder} placeholderTextColor={theme.muted} />
           </>
         )}
 

@@ -12,12 +12,20 @@ const outcomeInfo = {
   faq: { label: 'Bilgi', color: theme.muted, icon: 'info' },
   missed: { label: 'Kaçan', color: theme.accent, icon: 'phone-missed' }
 };
+const filters = [
+  { key: 'all', label: 'Tümü' },
+  { key: 'order', label: 'Sipariş' },
+  { key: 'reservation', label: 'Rezervasyon' },
+  { key: 'faq', label: 'Bilgi' },
+  { key: 'missed', label: 'Kaçan' }
+];
 
 export default function OrdersScreen({ client }) {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [filter, setFilter] = useState('all');
 
   const load = useCallback(async () => {
     try { setError(null); setCalls(await listCalls(client)); }
@@ -28,13 +36,29 @@ export default function OrdersScreen({ client }) {
   useEffect(() => { setLoading(true); load(); }, [load]);
 
   if (loading) return <View style={styles.centered}><ActivityIndicator color={theme.accent} /></View>;
+  const visibleCalls = filter === 'all' ? calls : calls.filter((c) => c.outcome === filter);
 
   return (
     <>
       <FlatList
-        style={styles.root} contentContainerStyle={styles.content} data={calls} keyExtractor={(c) => c.id}
+        style={styles.root} contentContainerStyle={styles.content} data={visibleCalls} keyExtractor={(c) => c.id}
         refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={theme.accent} />}
-        ListHeaderComponent={error ? <Card style={styles.errCard}><Text style={styles.err}>{error}</Text></Card> : null}
+        ListHeaderComponent={(
+          <View style={styles.header}>
+            <View style={styles.filters}>
+              {filters.map((f) => {
+                const active = filter === f.key;
+                return (
+                  <TouchableOpacity key={f.key} activeOpacity={0.75} onPress={() => setFilter(f.key)}
+                    style={[styles.filter, active && styles.filterActive]}>
+                    <Text style={[styles.filterText, active && styles.filterTextActive]}>{f.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {error ? <Card style={styles.errCard}><Text style={styles.err}>{error}</Text></Card> : null}
+          </View>
+        )}
         ListEmptyComponent={<Text style={styles.empty}>Henüz çağrı yok.</Text>}
         renderItem={({ item }) => {
           const oi = outcomeInfo[item.outcome] || outcomeInfo.faq;
@@ -69,6 +93,12 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.bg },
   content: { padding: 16, gap: 10 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg },
+  header: { gap: 10 },
+  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filter: { borderColor: theme.border, borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.card },
+  filterActive: { borderColor: theme.accent, backgroundColor: theme.accentBg },
+  filterText: { color: theme.muted, fontSize: 12, fontWeight: '800' },
+  filterTextActive: { color: theme.accent },
   item: { gap: 10 },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headText: { flex: 1 },

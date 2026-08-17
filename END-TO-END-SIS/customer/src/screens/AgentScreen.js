@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ScrollView, View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { getAssistant, updateAssistant } from '../api/customer.js';
+import { getAssistant, getPhoneNumber, updateAssistant } from '../api/customer.js';
 import { Section, Card, Pill, theme } from '../components/ui.js';
 
 export default function AgentScreen({ client }) {
   const [a, setA] = useState(null);
+  const [phone, setPhone] = useState(null);
   const [greeting, setGreeting] = useState('');
   const [openHours, setOpenHours] = useState('');
   const [loading, setLoading] = useState(true);
@@ -16,8 +17,9 @@ export default function AgentScreen({ client }) {
   const load = useCallback(async () => {
     try {
       setError(null);
-      const data = await getAssistant(client);
+      const [data, phoneData] = await Promise.all([getAssistant(client), getPhoneNumber(client)]);
       setA(data);
+      setPhone(phoneData);
       setGreeting(data?.config?.greeting || '');
       setOpenHours(data?.config?.openHours || '');
     } catch (e) { setError(e.message); }
@@ -47,6 +49,8 @@ export default function AgentScreen({ client }) {
           <View style={styles.pills}><Pill text="Aktif" color={theme.green} /><Pill text="7/24" color={theme.palette[1]} /></View>
           <View style={styles.kv}><Text style={styles.k}>Dil</Text><Text style={styles.v}>{a?.config?.language === 'tr' ? 'Türkçe' : (a?.config?.language || '—')}</Text></View>
           <View style={styles.kv}><Text style={styles.k}>Ses</Text><Text style={styles.v}>{a?.voice?.voiceId || '—'}</Text></View>
+          <View style={styles.kv}><Text style={styles.k}>Telefon</Text><Text style={styles.v}>{phone?.number || '—'}</Text></View>
+          <View style={styles.kv}><Text style={styles.k}>Hat durumu</Text><Text style={styles.v}>{phone?.status || '—'}</Text></View>
         </Card>
       </Section>
 

@@ -42,7 +42,28 @@ const demoAssistants = [
   { id: 'asst_kebap', tenantId: 't_kebap', orgId: 'org_afiyet', name: 'Kebapçı Ali Asistanı', model: { provider: 'local', model: 'qwen2.5:3b-instruct' }, voice: { provider: 'piper', voiceId: 'tr_TR-dfki-medium' }, transcriber: { provider: 'faster-whisper', language: 'tr' }, createdAt: iso(25 * 864e5), updatedAt: iso(1 * 864e5) },
   { id: 'asst_pizza', tenantId: 't_pizza', orgId: 'org_afiyet', name: 'Pizza Napoli Asistanı', model: { provider: 'local', model: 'qwen2.5:3b-instruct' }, voice: { provider: 'xtts', voiceId: 'afiyet-tr' }, transcriber: { provider: 'faster-whisper', language: 'tr' }, createdAt: iso(8 * 864e5), updatedAt: iso(6 * 36e5) }
 ];
-for (const a of demoAssistants) a.config = { greeting: `${a.name}, hoş geldiniz. Nasıl yardımcı olabilirim?`, openHours: '11:00 - 23:00', language: 'tr' };
+for (const a of demoAssistants) {
+  a.firstMessage = `${a.name}, hoş geldiniz. Nasıl yardımcı olabilirim?`;
+  a.metadata = { tenantId: a.tenantId, openHours: '11:00 - 23:00' };
+  a.config = { greeting: a.firstMessage, openHours: '11:00 - 23:00', language: 'tr' };
+}
+
+const demoPhoneNumbers = demoTenants.map((t) => {
+  const assistant = demoAssistants.find((a) => a.tenantId === t.id);
+  return {
+    id: `pn_${t.id}`,
+    orgId: 'org_afiyet',
+    tenantId: t.id,
+    assistantId: assistant?.id,
+    provider: 'byo-phone-number',
+    name: `${t.name} ana hat`,
+    number: t.phoneNumber,
+    status: t.status,
+    createdAt: iso(30 * 864e5),
+    updatedAt: iso(1 * 864e5),
+    metadata: { tenantId: t.id }
+  };
+});
 
 const demoCalls = [
   mkCall('t_lezzet', 'asst_lezzet', 1, { durMin: 3.2, answered: true, outcome: 'order', orderAmount: 420, customer: 'Ahmet Y.', summary: 'Karışık pizza + ayran siparişi', stt: 0.006, llm: 0.011, tts: 0.008, transport: 0.021, startedMsAgo: 1 * 36e5 }),
@@ -93,6 +114,157 @@ function detailFor(c) {
   };
 }
 
+function nextId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function assistantConfig(a) {
+  return {
+    ...(a.config || {}),
+    greeting: a.config?.greeting || a.firstMessage || '',
+    openHours: a.config?.openHours || a.metadata?.openHours || '',
+    language: a.config?.language || a.transcriber?.language || 'tr'
+  };
+}
+
+function applyAssistantConfig(a, config = {}) {
+  a.config = { ...assistantConfig(a), ...config };
+  if (config.greeting !== undefined) a.firstMessage = config.greeting;
+  if (config.openHours !== undefined) a.metadata = { ...(a.metadata || {}), openHours: config.openHours };
+  if (config.language !== undefined) a.transcriber = { ...(a.transcriber || {}), language: config.language };
+  a.updatedAt = new Date().toISOString();
+  return a;
+}
+
+function applyRawAssistantPatch(a, patch = {}) {
+  const { config, ...raw } = patch;
+  Object.assign(a, raw);
+  if (raw.metadata) a.metadata = { ...(a.metadata || {}), ...raw.metadata };
+  if (raw.transcriber) a.transcriber = { ...(a.transcriber || {}), ...raw.transcriber };
+  if (raw.model) a.model = { ...(a.model || {}), ...raw.model };
+  if (raw.voice) a.voice = { ...(a.voice || {}), ...raw.voice };
+  a.config = assistantConfig(a);
+  if (config) applyAssistantConfig(a, config);
+  if (a.firstMessage !== undefined) a.config.greeting = a.firstMessage;
+  if (a.metadata?.openHours !== undefined) a.config.openHours = a.metadata.openHours;
+  if (a.transcriber?.language !== undefined) a.config.language = a.transcriber.language;
+  a.updatedAt = new Date().toISOString();
+  return a;
+}
+
+function createDemoAssistant(body = {}) {
+  const nowIso = new Date().toISOString();
+  const tenantId = body.tenantId || body.metadata?.tenantId || demoTenants[0]?.id;
+  const a = {
+    ...body,
+    id: body.id || nextId('asst'),
+    orgId: body.orgId || 'org_afiyet',
+    tenantId,
+    name: body.name || 'Yeni Afiyet Asistanı',
+    model: body.model || { provider: 'groq', model: 'llama-3.1-8b-instant' },
+    voice: body.voice || { provider: 'inworld', voiceId: 'inworld-tts-1.5-mini' },
+    transcriber: body.transcriber || { provider: 'groq', model: 'whisper-large-v3-turbo', language: 'tr' },
+    metadata: { ...(body.metadata || {}), tenantId },
+    createdAt: body.createdAt || nowIso,
+    updatedAt: body.updatedAt || nowIso
+  };
+  a.config = assistantConfig(a);
+  if (!a.firstMessage) a.firstMessage = a.config.greeting || `${a.name}, hoş geldiniz. Nasıl yardımcı olabilirim?`;
+  a.config = assistantConfig(a);
+  demoAssistants.push(a);
+  return a;
+}
+
+function createDemoCall(body = {}) {
+  const assistant = demoAssistants.find((a) => a.id === body.assistantId) || demoAssistants[0];
+  const tenantId = body.tenantId || body.metadata?.tenantId || assistant?.tenantId || demoTenants[0]?.id;
+  const text = typeof body.input === 'string'
+    ? body.input
+    : Array.isArray(body.input)
+      ? body.input.map((m) => m.content || m.message || m.text || '').join(' ')
+      : '';
+  const amount = Number(body.analysis?.structuredData?.total || body.orderAmount || 0);
+  const inferredOrder = amount > 0 || /sipariş|order|pizza|kebap|menü|burger|lahmacun/i.test(text);
+  const startedAt = body.startedAt || body.createdAt || new Date().toISOString();
+  const durationSec = Number(body.durationSec || body.duration_sec || (text ? 65 : 0));
+  const startedMs = Date.parse(startedAt);
+  const endedAt = text && !Number.isNaN(startedMs) ? new Date(startedMs + durationSec * 1000).toISOString() : body.endedAt || null;
+  const costBreakdown = body.costBreakdown || { stt: 0, llm: 0, tts: 0, transport: 0, platform: 0 };
+  const cost = Number(body.cost || Object.values(costBreakdown).reduce((s, v) => s + Number(v || 0), 0).toFixed(4));
+  const call = {
+    ...body,
+    id: body.id || nextId('call'),
+    orgId: body.orgId || 'org_afiyet',
+    tenantId,
+    assistantId: assistant?.id || body.assistantId,
+    type: body.type || 'outboundPhoneCall',
+    status: body.status || (text ? 'ended' : 'queued'),
+    endedReason: body.endedReason || (text ? 'customer-ended-call' : null),
+    answered: body.answered ?? !!text,
+    outcome: body.outcome || body.analysis?.structuredData?.intent || (inferredOrder ? 'order' : 'faq'),
+    orderAmount: amount,
+    customerName: body.customerName || body.customer?.name || body.customer?.number || 'Bilinmeyen',
+    summary: body.summary || text || 'Vapi uyumlu çağrı oluşturuldu',
+    startedAt,
+    endedAt,
+    createdAt: body.createdAt || startedAt,
+    durationSec,
+    cost,
+    costBreakdown
+  };
+  if (text) {
+    call.transcript = [
+      { role: 'user', text },
+      { role: 'assistant', text: inferredOrder ? 'Siparişinizi aldım ve onay için hazırlıyorum.' : 'Size yardımcı oldum, teşekkürler.' }
+    ];
+    call.analysis = {
+      ...(body.analysis || {}),
+      summary: body.analysis?.summary || call.summary,
+      structuredData: {
+        intent: call.outcome,
+        total: call.orderAmount,
+        currency: 'TRY',
+        ...(body.analysis?.structuredData || {})
+      },
+      successEvaluation: body.analysis?.successEvaluation || 'success'
+    };
+  }
+  demoCalls.unshift(call);
+  return call;
+}
+
+function callDetail(c) {
+  const generated = detailFor(c);
+  return {
+    ...c,
+    ...generated,
+    transcript: c.transcript || generated.transcript,
+    recordingUrl: c.recordingUrl || generated.recordingUrl,
+    analysis: c.analysis || generated.analysis
+  };
+}
+
+function createDemoPhoneNumber(body = {}) {
+  const nowIso = new Date().toISOString();
+  const assistant = demoAssistants.find((a) => a.id === body.assistantId);
+  const tenantId = body.tenantId || body.metadata?.tenantId || assistant?.tenantId || demoTenants[0]?.id;
+  const p = {
+    ...body,
+    id: body.id || nextId('pn'),
+    orgId: body.orgId || 'org_afiyet',
+    tenantId,
+    provider: body.provider || 'byo-phone-number',
+    name: body.name || 'Afiyet telefon hattı',
+    number: body.number || body.sipUri || '',
+    status: body.status || 'active',
+    createdAt: body.createdAt || nowIso,
+    updatedAt: body.updatedAt || nowIso,
+    metadata: { ...(body.metadata || {}), tenantId }
+  };
+  demoPhoneNumbers.push(p);
+  return p;
+}
+
 // ================= Data sources (uniform async interface) =================
 const demoSource = {
   async getTenants() { return demoTenants; },
@@ -101,12 +273,80 @@ const demoSource = {
   async patchAssistant(id, config) {
     const a = demoAssistants.find((x) => x.id === id);
     if (!a) return null;
-    a.config = { ...a.config, ...config };
-    a.updatedAt = new Date().toISOString();
-    return a;
+    return applyAssistantConfig(a, config);
+  },
+  async rawListAssistants(params = {}) { return demoAssistants.slice(0, Number(params.limit) || 100); },
+  async rawCreateAssistant(body) { return createDemoAssistant(body); },
+  async rawGetAssistant(id) { return demoAssistants.find((a) => a.id === id) || null; },
+  async rawPatchAssistant(id, body) {
+    const a = demoAssistants.find((x) => x.id === id);
+    return a ? applyRawAssistantPatch(a, body) : null;
+  },
+  async rawDeleteAssistant(id) {
+    const i = demoAssistants.findIndex((a) => a.id === id);
+    if (i < 0) return null;
+    return demoAssistants.splice(i, 1)[0];
   },
   async listCalls(tenantId) { return tenantId ? demoCalls.filter((c) => c.tenantId === tenantId) : demoCalls; },
-  async getCall(id) { const c = demoCalls.find((x) => x.id === id); return c ? { ...c, ...detailFor(c) } : null; }
+  async getCall(id) { const c = demoCalls.find((x) => x.id === id); return c ? callDetail(c) : null; },
+  async rawListCalls(params = {}) {
+    let rows = demoCalls;
+    if (params.assistantId) rows = rows.filter((c) => c.assistantId === params.assistantId);
+    return rows.slice(0, Number(params.limit) || 100);
+  },
+  async rawCreateCall(body) { return createDemoCall(body); },
+  async rawGetCall(id) { const c = demoCalls.find((x) => x.id === id); return c ? callDetail(c) : null; },
+  async rawPatchCall(id, body) {
+    const c = demoCalls.find((x) => x.id === id);
+    if (!c) return null;
+    Object.assign(c, body, { updatedAt: new Date().toISOString() });
+    return c;
+  },
+  async rawDeleteCall(id) {
+    const i = demoCalls.findIndex((c) => c.id === id);
+    if (i < 0) return null;
+    return demoCalls.splice(i, 1)[0];
+  },
+  async listPhoneNumbers(tenantId) {
+    return tenantId ? demoPhoneNumbers.filter((p) => p.tenantId === tenantId) : demoPhoneNumbers;
+  },
+  async rawListPhoneNumbers(params = {}) { return demoPhoneNumbers.slice(0, Number(params.limit) || 100); },
+  async rawCreatePhoneNumber(body) { return createDemoPhoneNumber(body); },
+  async rawGetPhoneNumber(id) { return demoPhoneNumbers.find((p) => p.id === id) || null; },
+  async rawPatchPhoneNumber(id, body) {
+    const p = demoPhoneNumbers.find((x) => x.id === id);
+    if (!p) return null;
+    Object.assign(p, body, { updatedAt: new Date().toISOString() });
+    if (body.metadata) p.metadata = { ...(p.metadata || {}), ...body.metadata };
+    return p;
+  },
+  async rawDeletePhoneNumber(id) {
+    const i = demoPhoneNumbers.findIndex((p) => p.id === id);
+    if (i < 0) return null;
+    return demoPhoneNumbers.splice(i, 1)[0];
+  },
+  async rawCreateChat(body) {
+    const input = typeof body.input === 'string'
+      ? body.input
+      : Array.isArray(body.input)
+        ? body.input.map((m) => m.content || m.message || m.text || '').join(' ')
+        : '';
+    const assistant = demoAssistants.find((a) => a.id === body.assistantId) || demoAssistants[0];
+    return {
+      id: nextId('chat'),
+      orgId: 'org_afiyet',
+      assistantId: assistant?.id,
+      input: body.input,
+      output: input
+        ? `Demo yanıt: "${input}" mesajını aldım.`
+        : 'Demo yanıt hazır.',
+      messages: [
+        ...(input ? [{ role: 'user', content: input }] : []),
+        { role: 'assistant', content: input ? `Demo yanıt: "${input}" mesajını aldım.` : 'Demo yanıt hazır.' }
+      ],
+      createdAt: new Date().toISOString()
+    };
+  }
 };
 
 function buildVapiSource() {
@@ -130,6 +370,11 @@ function buildVapiSource() {
       const v = await vapi.patchAssistant(id, mapConfigToVapi(config));
       return v ? mapAssistant(v, asstToTenant[id]) : null;
     },
+    async rawListAssistants(params = {}) { return vapi.listAssistants({ limit: 100, ...params }); },
+    async rawCreateAssistant(body) { return vapi.createAssistant(body); },
+    async rawGetAssistant(id) { return vapi.getAssistant(id); },
+    async rawPatchAssistant(id, body) { return vapi.patchAssistant(id, body); },
+    async rawDeleteAssistant(id) { return vapi.deleteAssistant(id); },
     async listCalls(tenantId) {
       if (tenantId) {
         const t = cfg.find((x) => x.id === tenantId);
@@ -143,7 +388,26 @@ function buildVapiSource() {
     async getCall(id) {
       const v = await vapi.getCall(id);
       return v ? mapCallDetail(v, asstToTenant[v.assistantId]) : null;
-    }
+    },
+    async rawListCalls(params = {}) { return vapi.listCalls({ limit: 100, ...params }); },
+    async rawCreateCall(body) { return vapi.createCall(body); },
+    async rawGetCall(id) { return vapi.getCall(id); },
+    async rawPatchCall(id, body) { return vapi.patchCall(id, body); },
+    async rawDeleteCall(id) { return vapi.deleteCall(id); },
+    async listPhoneNumbers(tenantId) {
+      const raw = await vapi.listPhoneNumbers({ limit: 100 });
+      const list = (Array.isArray(raw) ? raw : []).map((p) => ({
+        ...p,
+        tenantId: asstToTenant[p.assistantId] || p.metadata?.tenantId
+      }));
+      return tenantId ? list.filter((p) => p.tenantId === tenantId) : list;
+    },
+    async rawListPhoneNumbers(params = {}) { return vapi.listPhoneNumbers({ limit: 100, ...params }); },
+    async rawCreatePhoneNumber(body) { return vapi.createPhoneNumber(body); },
+    async rawGetPhoneNumber(id) { return vapi.getPhoneNumber(id); },
+    async rawPatchPhoneNumber(id, body) { return vapi.patchPhoneNumber(id, body); },
+    async rawDeletePhoneNumber(id) { return vapi.deletePhoneNumber(id); },
+    async rawCreateChat(body) { return vapi.createChat(body); }
   };
 }
 
@@ -164,13 +428,31 @@ function customerOverview(tenant, tCalls) {
   const revenue = orders.reduce((s, c) => s + c.orderAmount, 0);
   const minutesUsed = tCalls.reduce((s, c) => s + c.durationSec, 0) / 60;
   const volume = {};
+  const outcomes = {};
+  const hours = {};
   for (const c of tCalls) if (c.startedAt) volume[c.startedAt.slice(0, 10)] = (volume[c.startedAt.slice(0, 10)] || 0) + 1;
+  for (const c of tCalls) {
+    outcomes[c.outcome || 'unknown'] = (outcomes[c.outcome || 'unknown'] || 0) + 1;
+    if (c.startedAt) {
+      const hour = new Date(c.startedAt).getHours();
+      if (!Number.isNaN(hour)) hours[`${hour.toString().padStart(2, '0')}:00`] = (hours[`${hour.toString().padStart(2, '0')}:00`] || 0) + 1;
+    }
+  }
+  const missedCalls = tCalls.length - answered.length;
+  const avgTicket = orders.length ? revenue / orders.length : 0;
   return {
     tenant: { id: tenant.id, name: tenant.name, phoneNumber: tenant.phoneNumber, plan: tenant.plan?.name },
     revenue, orders: orders.length, reservations: tCalls.filter((c) => c.outcome === 'reservation').length,
     totalCalls: tCalls.length, answerRate: tCalls.length ? answered.length / tCalls.length : 0,
-    avgTicket: orders.length ? revenue / orders.length : 0,
+    missedCalls, conversionRate: answered.length ? orders.length / answered.length : 0,
+    avgTicket, lostRevenueEstimate: Math.round(missedCalls * avgTicket),
+    totalMinutes: Math.round(minutesUsed),
     volumeByDay: Object.entries(volume).map(([day, count]) => ({ day, count })),
+    volumeByHour: Object.entries(hours).map(([hour, count]) => ({ hour, count })),
+    outcomeBreakdown: Object.entries(outcomes).map(([outcome, count]) => ({ outcome, count })),
+    recentOrders: orders
+      .slice(0, 5)
+      .map((c) => ({ id: c.id, customerName: c.customerName, summary: c.summary, amount: c.orderAmount, startedAt: c.startedAt })),
     usage: { minutesUsed: Math.round(minutesUsed), includedMinutes: tenant.plan?.includedMinutes || 0 }
   };
 }
@@ -207,7 +489,7 @@ function send(res, status, body) {
     'content-type': 'application/json',
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'authorization, content-type, x-tenant-id',
-    'access-control-allow-methods': 'GET, POST, PATCH, PUT, OPTIONS'
+    'access-control-allow-methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS'
   });
   res.end(JSON.stringify(body));
 }
@@ -215,6 +497,9 @@ function readBody(req, cb) {
   let data = '';
   req.on('data', (c) => (data += c));
   req.on('end', () => { try { cb(JSON.parse(data || '{}')); } catch { cb({}); } });
+}
+function readJson(req) {
+  return new Promise((resolve) => readBody(req, resolve));
 }
 
 const server = http.createServer(async (req, res) => {
@@ -224,6 +509,8 @@ const server = http.createServer(async (req, res) => {
     const path = url.pathname.replace(/\/+$/, '') || '/';
     const seg = path.split('/').filter(Boolean);
     const limit = Number.parseInt(url.searchParams.get('limit') || '100', 10);
+    const query = Object.fromEntries(url.searchParams.entries());
+    if (!query.limit) query.limit = limit;
 
     if (path === '/health') return send(res, 200, { status: 'ok', service: 'e2e-sis-backend', source: USE_VAPI ? 'vapi' : 'demo' });
 
@@ -243,7 +530,16 @@ const server = http.createServer(async (req, res) => {
       if (!tenant) return send(res, 400, { error: 'x-tenant-id gerekli / geçersiz tenant' });
 
       if (seg[1] === 'overview') return send(res, 200, customerOverview(tenant, await source.listCalls(tenant.id)));
-      if (seg[1] === 'phone-number') return send(res, 200, { number: tenant.phoneNumber, status: tenant.status, provider: 'afiyet-telephony' });
+      if (seg[1] === 'phone-number') {
+        const numbers = source.listPhoneNumbers ? await source.listPhoneNumbers(tenant.id) : [];
+        const phone = numbers[0];
+        return send(res, 200, {
+          number: phone?.number || phone?.sipUri || tenant.phoneNumber,
+          status: phone?.status || tenant.status,
+          provider: phone?.provider || 'afiyet-telephony',
+          assistantId: phone?.assistantId
+        });
+      }
       if (seg[1] === 'calls') {
         if (!seg[2]) return send(res, 200, (await source.listCalls(tenant.id)).slice(0, limit).map(toCustomerCall));
         const d = await source.getCall(seg[2]);
@@ -280,16 +576,69 @@ const server = http.createServer(async (req, res) => {
 
     // -------- Vapi-shaped raw (full) --------
     if (seg[0] === 'assistant') {
-      if (!seg[1]) return send(res, 200, (await source.listAssistants()).map(stripInternal));
-      const a = await source.getAssistant(seg[1]);
-      return a ? send(res, 200, stripInternal(a)) : send(res, 404, { error: 'not found' });
+      if (!seg[1]) {
+        if (req.method === 'GET') return send(res, 200, await source.rawListAssistants(query));
+        if (req.method === 'POST') return send(res, 201, await source.rawCreateAssistant(await readJson(req)));
+        return send(res, 405, { error: 'method not allowed' });
+      }
+      if (req.method === 'GET') {
+        const a = await source.rawGetAssistant(seg[1]);
+        return a ? send(res, 200, a) : send(res, 404, { error: 'not found' });
+      }
+      if (req.method === 'PATCH' || req.method === 'PUT') {
+        const a = await source.rawPatchAssistant(seg[1], await readJson(req));
+        return a ? send(res, 200, a) : send(res, 404, { error: 'not found' });
+      }
+      if (req.method === 'DELETE') {
+        const a = await source.rawDeleteAssistant(seg[1]);
+        return a ? send(res, 200, a) : send(res, 404, { error: 'not found' });
+      }
+      return send(res, 405, { error: 'method not allowed' });
     }
     if (seg[0] === 'call') {
-      if (!seg[1]) return send(res, 200, await source.listCalls());
-      const d = await source.getCall(seg[1]);
-      return d ? send(res, 200, d) : send(res, 404, { error: 'not found' });
+      if (!seg[1]) {
+        if (req.method === 'GET') return send(res, 200, await source.rawListCalls(query));
+        if (req.method === 'POST') return send(res, 201, await source.rawCreateCall(await readJson(req)));
+        return send(res, 405, { error: 'method not allowed' });
+      }
+      if (req.method === 'GET') {
+        const d = await source.rawGetCall(seg[1]);
+        return d ? send(res, 200, d) : send(res, 404, { error: 'not found' });
+      }
+      if (req.method === 'PATCH' || req.method === 'PUT') {
+        const d = await source.rawPatchCall(seg[1], await readJson(req));
+        return d ? send(res, 200, d) : send(res, 404, { error: 'not found' });
+      }
+      if (req.method === 'DELETE') {
+        const d = await source.rawDeleteCall(seg[1]);
+        return d ? send(res, 200, d) : send(res, 404, { error: 'not found' });
+      }
+      return send(res, 405, { error: 'method not allowed' });
     }
-    if (seg[0] === 'phone-number') return send(res, 200, (await source.getTenants()).map((t) => ({ id: t.id, number: t.phoneNumber, status: t.status })));
+    if (seg[0] === 'phone-number') {
+      if (!seg[1]) {
+        if (req.method === 'GET') return send(res, 200, await source.rawListPhoneNumbers(query));
+        if (req.method === 'POST') return send(res, 201, await source.rawCreatePhoneNumber(await readJson(req)));
+        return send(res, 405, { error: 'method not allowed' });
+      }
+      if (req.method === 'GET') {
+        const p = await source.rawGetPhoneNumber(seg[1]);
+        return p ? send(res, 200, p) : send(res, 404, { error: 'not found' });
+      }
+      if (req.method === 'PATCH' || req.method === 'PUT') {
+        const p = await source.rawPatchPhoneNumber(seg[1], await readJson(req));
+        return p ? send(res, 200, p) : send(res, 404, { error: 'not found' });
+      }
+      if (req.method === 'DELETE') {
+        const p = await source.rawDeletePhoneNumber(seg[1]);
+        return p ? send(res, 200, p) : send(res, 404, { error: 'not found' });
+      }
+      return send(res, 405, { error: 'method not allowed' });
+    }
+    if (seg[0] === 'chat') {
+      if (req.method !== 'POST') return send(res, 405, { error: 'method not allowed' });
+      return send(res, 200, await source.rawCreateChat(await readJson(req)));
+    }
 
     return send(res, 404, { error: `no route ${path}` });
   } catch (err) {
@@ -301,7 +650,7 @@ server.listen(PORT, () => {
   console.log(`E2E-SIS backend on http://localhost:${PORT}  (source: ${USE_VAPI ? 'VAPI (live)' : 'demo'})`);
   console.log('  customer /customer/{overview,calls,calls/:id,assistant,assistant/:id,phone-number}  (x-tenant-id)');
   console.log('  admin    /admin/{overview,tenants,calls,calls/:id}');
-  console.log('  raw      /assistant[/:id]  /call[/:id]  /phone-number  /health');
+  console.log('  raw      /assistant[/:id]  /call[/:id]  /phone-number[/:id]  /chat  /health');
   if (DATA_SOURCE === 'vapi' && !USE_VAPI) console.log('  ⚠ DATA_SOURCE=vapi but VAPI_API_KEY missing → using demo');
   if (USE_VAPI && !existsSync('./tenants.json')) console.log('  ⚠ tenants.json missing → customers map to no assistants (see tenants.example.json)');
 });

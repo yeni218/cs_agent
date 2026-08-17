@@ -1,3 +1,6 @@
+import { adminOverview, adminTenants, mapAdminCall } from './shape.js';
+import { requireData } from './supabase.js';
+
 // Admin-scope resource calls (full economics). Demo data mirrors /admin/*.
 const DEMO_OVERVIEW = {
   tenantCount: 3, activeTenants: 2, mrr: 448, totalCogs: 0.366,
@@ -19,12 +22,30 @@ const DEMO_CALLS = [
 ];
 
 export async function getAdminOverview(client) {
-  return client.demo ? DEMO_OVERVIEW : client.get('/admin/overview');
+  if (client.demo) return DEMO_OVERVIEW;
+  if (client.source === 'supabase') {
+    const [tenants, calls] = await Promise.all([loadTenants(client), listAdminCalls(client)]);
+    return adminOverview(tenants, calls);
+  }
+  return client.get('/admin/overview');
 }
 export async function listTenants(client) {
-  return client.demo ? DEMO_TENANTS : client.get('/admin/tenants');
+  if (client.demo) return DEMO_TENANTS;
+  if (client.source === 'supabase') {
+    const [tenants, calls] = await Promise.all([loadTenants(client), listAdminCalls(client)]);
+    return adminTenants(tenants, calls);
+  }
+  return client.get('/admin/tenants');
 }
 export async function listAdminCalls(client) {
+  if (client.source === 'supabase') {
+    const rows = await requireData(client.supabase
+      .from('calls')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100));
+    return (rows || []).map(mapAdminCall);
+  }
   const raw = client.demo ? DEMO_CALLS : await client.get('/admin/calls', { limit: 100 });
   return Array.isArray(raw) ? raw : [];
 }
@@ -43,5 +64,20 @@ export async function getAdminCall(client, id) {
       analysis: { summary: 'Sipariş alındı', structuredData: { intent: 'order' }, successEvaluation: 'success' }
     };
   }
+  if (client.source === 'supabase') {
+    const row = await requireData(client.supabase
+      .from('calls')
+      .select('*')
+      .eq('id', id)
+      .single());
+    return mapAdminCall(row);
+  }
   return client.get(`/admin/calls/${id}`);
+}
+
+async function loadTenants(client) {
+  return requireData(client.supabase
+    .from('tenants')
+    .select('*')
+    .order('created_at', { ascending: true }));
 }

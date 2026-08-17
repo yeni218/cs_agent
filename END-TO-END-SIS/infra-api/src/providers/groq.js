@@ -4,7 +4,7 @@
 const GROQ_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
 const KEY = process.env.GROQ_API_KEY;
 
-export async function llmComplete({ messages, model, temperature = 0.3, maxTokens = 250 }) {
+export async function llmComplete({ messages, model, temperature = 0.3, maxTokens = 250, responseFormat }) {
   if (!KEY) {
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
     const content = mockReply(lastUser);
@@ -13,7 +13,13 @@ export async function llmComplete({ messages, model, temperature = 0.3, maxToken
   const res = await fetch(`${GROQ_URL}/chat/completions`, {
     method: 'POST',
     headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens })
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+      ...(responseFormat ? { response_format: responseFormat } : {})
+    })
   });
   if (!res.ok) throw new Error(`Groq LLM ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();

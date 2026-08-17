@@ -39,7 +39,7 @@ cockpit — same binary, the account decides.
 
 | Dir | What it is | Status |
 |---|---|---|
-| `customer/` | **The app** (Expo/React Native). Login → restaurant view *or* admin cockpit by role. (folder name is historical) | ✅ runnable (demo logins) |
+| `customer/` | **The app** (Expo/React Native). Login → restaurant view *or* admin cockpit by role. Direct Supabase when `EXPO_PUBLIC_SUPABASE_*` is set; demo/backend fallback remains. (folder name is historical) | ✅ runnable |
 | `backend/` | One brain, two faces: `POST /auth/login` → role; `/customer/*` (COGS stripped) + `/admin/*` (full economics). Source switch: `DATA_SOURCE=demo` \| `vapi` (proxies any Vapi-shaped API). | ✅ auth + tenancy + redaction + proxy |
 | `infra-api/` | **Our own** voice-agent API, **Vapi-compatible** (Groq LLM/STT + Inworld TTS). Point the backend's `VAPI_BASE_URL` here to run on our infra instead of Vapi — swap by base URL only. | ✅ CRUD + engine + cost |
 | `supabase/` | **Backend-less** option: app talks straight to Supabase. Schema + **RLS** + cost-free `customer_calls` view (redaction in the DB) + a `call` Edge Function (Groq + Inworld). Simplest to run. | ✅ schema + RLS + function |
@@ -55,17 +55,18 @@ cockpit — same binary, the account decides.
 ## Quick start
 
 ```bash
-# Mobile dashboard (works in demo mode with no API key)
-cd mobile
+# Unified app (works in demo mode with no API key)
+cd customer
 npm install
 npx expo start        # press w for web, or scan QR with Expo Go
 
-# Vapi-shaped backend stub (the future "bypass Vapi" layer)
+# Optional backend fallback (not needed for direct Supabase mode)
 cd ../backend
 npm install
 npm start             # http://localhost:8787/assistant , /call
 ```
 
-In the app's **Settings** tab you can switch between **Demo**, **Vapi Cloud**
-(enter your Vapi private key), and **Afiyet Backend** (our stub / future
-sovereign backend). Nothing else in the app changes — that's the point.
+For direct Supabase mode, copy `customer/.env.example` to `customer/.env`, set
+`EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`, then untick
+`Demo modu` on the login screen. Nothing else in the app changes — that is the
+point.

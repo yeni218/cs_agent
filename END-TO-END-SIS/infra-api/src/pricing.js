@@ -7,7 +7,9 @@ export const PRICING = {
   sttPerSec: n(process.env.PRICE_STT_PER_SEC, 0.0000111),        // Groq Whisper ≈ $0.04/hr
   llmInPer1k: n(process.env.PRICE_LLM_IN_PER_1K, 0.00059),       // Groq llama-3.3-70b in
   llmOutPer1k: n(process.env.PRICE_LLM_OUT_PER_1K, 0.00079),     // Groq llama-3.3-70b out
-  ttsPer1kChars: n(process.env.PRICE_TTS_PER_1K_CHARS, 0.005),   // Inworld TTS (set to your rate)
+  // Inworld TTS 1.5 Mini on Builder: $9 / 1M chars = $0.009 / 1k chars.
+  // At ~400 generated chars per live call minute, this is the $0.0036/min route.
+  ttsPer1kChars: n(process.env.PRICE_TTS_PER_1K_CHARS, 0.009),
   transportPerSec: n(process.env.PRICE_TRANSPORT_PER_SEC, 0.0000833), // telephony ≈ $0.005/min
   platformPerCall: n(process.env.PRICE_PLATFORM_PER_CALL, 0.005)      // our platform fee (Vapi's "vapi" line)
 };

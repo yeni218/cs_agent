@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
     const row = {
       id, tenant_id: assistant.tenant_id, assistant_id: assistant.id,
       type: 'webCall', status: 'ended', answered: true,
-      outcome: r.outcome, order_amount: r.orderAmount, customer_name: null,
+      outcome: r.outcome, order_amount: r.orderAmount, customer_name: r.analysis?.structuredData?.customerName || null,
       summary: r.analysis.summary, duration_sec: r.durationSec,
       cost: r.cost, cost_breakdown: r.costBreakdown,          // stored, never returned to customer
       messages: r.messages, analysis: r.analysis, recording_url: null,
