@@ -7,7 +7,8 @@ No API server of ours to run.
 [ app: supabase-js ]
    • Auth (login → JWT: role + tenant)
    • data: RLS + customer/admin views    ← redaction enforced by Postgres
-   • functions/call                      ← the ONLY code (Groq + Inworld)
+   • functions/call                      ← web/test turn (Groq + Inworld)
+   • functions/ingest-call               ← production worker/CDR ingest
 ```
 
 ## What enforces "customers never see cost"
@@ -30,8 +31,15 @@ So even a hand-crafted `supabase.from('calls')` returns nothing for a customer.
    ```
 5. **Edge Function secrets & deploy:**
    ```bash
-   supabase secrets set GROQ_API_KEY=... INWORLD_API_KEY=...
+   supabase secrets set \
+     GROQ_API_KEY=... \
+     INWORLD_API_KEY=... \
+     AFIYET_INGEST_SECRET=... \
+     USD_TRY=47.52 \
+     VERIMOR_PACKAGE_MINUTES=10000 \
+     VERIMOR_PACKAGE_PRICE_TRY=2999
    supabase functions deploy call
+   supabase functions deploy ingest-call
    ```
 
 ## Client integration (replaces our backend + client.js)
@@ -53,11 +61,41 @@ await supabase.from('assistants').update({ config }).eq('id', assistantId);     
 const { data: allCalls } = await supabase.from('calls').select('*');                  // includes cost_breakdown
 const { data: tenants } = await supabase.from('tenants').select('*');
 
-// run a call (the only server code)
+// run a web/test call
 const { data: call } = await supabase.functions.invoke('call', { body: { assistantId, input: 'iki pizza istiyorum' } });
 ```
 Overview numbers (revenue, answer rate, MRR, margins) are computed **client-side**
 from these rows — the same way `mobile/`'s analytics already work.
+
+## Production call ingest
+
+The persistent voice worker should send completed calls here:
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/ingest-call" \
+  -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+  -H "x-afiyet-ingest-secret: $AFIYET_INGEST_SECRET" \
+  -H "content-type: application/json" \
+  -d '{
+    "assistantId": "asst_lezzet",
+    "externalCallId": "verimor-123",
+    "durationSec": 84,
+    "audioSec": 74,
+    "messages": [{"role":"user","message":"iki pizza toplam 420 lira"}],
+    "analysis": {"summary":"iki pizza", "structuredData":{"intent":"order","total":420}},
+    "usage": {"promptTokens":800, "completionTokens":150, "ttsChars":400},
+    "telephonyCdr": {"durationSec":84, "billedSec":84, "costTry":0.42, "exchangeRate":47.52}
+  }'
+```
+
+This writes:
+- `calls` with internal `cost` / `cost_breakdown`
+- `call_usage_events`
+- `telephony_cdrs`
+- `cost_reconciliations`
+- `audit_log`
+
+Customers still read only `customer_calls`, where cost columns do not exist.
 
 ## Migrating the app
 Swap the app's `src/api/client.js` (fetch) for a `supabase-js` client and change

@@ -9,10 +9,10 @@ on conflict (id) do nothing;
 
 insert into public.assistants (id, tenant_id, name, first_message, model, voice, transcriber, config) values
   ('asst_lezzet', 't_lezzet', 'Lezzet Sipariş Asistanı', 'Lezzet Restoran, hoş geldiniz. Nasıl yardımcı olabilirim?',
-   '{"provider":"groq","model":"llama-3.3-70b-versatile"}', '{"provider":"inworld","voiceId":"Ashley"}',
+   '{"provider":"groq","model":"llama-3.1-8b-instant"}', '{"provider":"inworld","voiceId":"Ashley"}',
    '{"provider":"groq","language":"tr"}', '{"greeting":"Lezzet Restoran, hoş geldiniz.","openHours":"11:00 - 23:00","language":"tr"}'),
   ('asst_kebap', 't_kebap', 'Kebapçı Ali Asistanı', 'Kebapçı Ali, buyurun.',
-   '{"provider":"groq","model":"llama-3.3-70b-versatile"}', '{"provider":"inworld","voiceId":"Ashley"}',
+   '{"provider":"groq","model":"llama-3.1-8b-instant"}', '{"provider":"inworld","voiceId":"Ashley"}',
    '{"provider":"groq","language":"tr"}', '{"greeting":"Kebapçı Ali, buyurun.","openHours":"11:00 - 24:00","language":"tr"}')
 on conflict (id) do nothing;
 

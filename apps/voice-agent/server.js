@@ -16,6 +16,7 @@ import { splitIntoSpeechChunks } from '../../packages/voice-core/speech-chunker.
 import { normalizeForSpeech } from '../../packages/voice-core/text-normalize.js';
 import { CallMetrics } from '../../packages/voice-core/metrics.js';
 import { sendClear, sendMulawAudio } from '../../packages/voice-core/twilio-playback.js';
+import { ingestCompletedCall, isSupabaseIngestEnabled } from './supabase-ingest.js';
 
 const port = Number.parseInt(process.env.VOICE_PORT || '8081', 10);
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
@@ -61,6 +62,7 @@ fastify.get('/health', async () => ({
   status: 'ok',
   service: 'afiyet-voice-agent',
   activeCalls: activeCalls.size,
+  supabaseIngest: isSupabaseIngestEnabled() ? 'enabled' : 'disabled',
   timestamp: new Date().toISOString()
 }));
 
@@ -78,6 +80,7 @@ fastify.register(async function registerMediaStream(app) {
 
     let streamSid = null;
     let callSid = null;
+    let callerNumber = 'unknown';
     let session = null;
     let processing = false;
     let pendingUtterance = null;
@@ -85,6 +88,11 @@ fastify.register(async function registerMediaStream(app) {
     let flushTimer = null;
     let assistantGeneration = 0;
     let heardUser = false;
+    let cleanedUp = false;
+    let userAudioBytes = 0;
+    let ttsChars = 0;
+    let lastOrderId = null;
+    const transcriptMessages = [];
     const metrics = new CallMetrics();
 
     socket.on('message', async (data) => {
@@ -95,7 +103,7 @@ fastify.register(async function registerMediaStream(app) {
           streamSid = message.start.streamSid;
           callSid = message.start.callSid;
           metrics.sessionId = streamSid;
-          const callerNumber = message.start.customParameters?.callerNumber || 'unknown';
+          callerNumber = message.start.customParameters?.callerNumber || 'unknown';
 
           session = createAgentSession({
             sessionId: streamSid,
@@ -145,11 +153,17 @@ fastify.register(async function registerMediaStream(app) {
     socket.on('error', (error) => fastify.log.error({ error }, 'Media stream socket error'));
 
     function cleanup() {
+      if (cleanedUp) return;
+      cleanedUp = true;
       clearFlush();
+      const summary = metrics.summary();
       if (streamSid) {
         activeCalls.delete(streamSid);
-        fastify.log.info({ metrics: metrics.summary() }, 'Call metrics');
+        fastify.log.info({ metrics: summary }, 'Call metrics');
       }
+      void flushCompletedCall(summary).catch((error) => {
+        fastify.log.error({ error }, 'Supabase call ingest failed');
+      });
     }
 
     function clearFlush() {
@@ -188,6 +202,7 @@ fastify.register(async function registerMediaStream(app) {
     async function processUtterance(audio) {
       processing = true;
       try {
+        userAudioBytes += audio.length;
         const text = await metrics.time('stt', () => stt.transcribePcm16(audio));
         if (!text || text.length < 2) return;
 
@@ -217,7 +232,9 @@ fastify.register(async function registerMediaStream(app) {
 
     async function respond(text) {
       metrics.increment('turns');
+      transcriptMessages.push({ role: 'user', message: text, time: Date.now() });
       const result = await metrics.time('llm', () => session.processUserText(text));
+      lastOrderId = result.orderId || lastOrderId;
 
       if (result.transfer) {
         metrics.increment('transfers');
@@ -225,6 +242,7 @@ fastify.register(async function registerMediaStream(app) {
         return;
       }
 
+      transcriptMessages.push({ role: 'bot', message: result.text || '', time: Date.now() });
       await speak(result.text);
     }
 
@@ -237,7 +255,9 @@ fastify.register(async function registerMediaStream(app) {
       if (!text?.trim()) return;
 
       const generation = ++assistantGeneration;
-      const chunks = splitIntoSpeechChunks(normalizeForSpeech(text));
+      const normalized = normalizeForSpeech(text);
+      ttsChars += normalized.length;
+      const chunks = splitIntoSpeechChunks(normalized);
       const speakStartedAt = Date.now();
       let totalChunksSent = 0;
       let firstAudioSent = false;
@@ -258,6 +278,40 @@ fastify.register(async function registerMediaStream(app) {
       if (totalChunksSent) {
         fastify.log.info({ streamSid, chunksSent: totalChunksSent }, 'Assistant audio sent');
       }
+    }
+
+    async function flushCompletedCall(summary) {
+      if (!streamSid && !callSid) return;
+      const durationSec = Math.max(1, Math.round((Date.now() - metrics.startedAt) / 1000));
+      const audioSec = Math.round(userAudioBytes / (8000 * 2));
+      const outcome = lastOrderId ? 'order' : transcriptMessages.length ? 'faq' : 'missed';
+      const transcript = transcriptMessages.map((m) => `${m.role === 'user' ? 'User' : 'AI'}: ${m.message}`).join('\n');
+      const response = await ingestCompletedCall({
+        assistantId: process.env.AFIYET_ASSISTANT_ID || 'asst_lezzet',
+        tenantId: process.env.AFIYET_TENANT_ID || 't_lezzet',
+        externalCallId: callSid || streamSid,
+        type: 'inboundPhoneCall',
+        from: callerNumber,
+        answered: heardUser,
+        outcome,
+        durationSec,
+        audioSec,
+        messages: transcriptMessages,
+        transcript,
+        summary: transcript || 'No caller speech captured',
+        analysis: {
+          summary: transcript || 'No caller speech captured',
+          structuredData: { intent: outcome, orderId: lastOrderId },
+          successEvaluation: heardUser ? 'success' : 'failed',
+          metrics: summary
+        },
+        usage: {
+          ttsChars,
+          promptTokens: 0,
+          completionTokens: 0
+        }
+      }, { logger: fastify.log });
+      if (!response.skipped) fastify.log.info({ response }, 'Supabase call ingested');
     }
   });
 });

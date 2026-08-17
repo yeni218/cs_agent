@@ -22,7 +22,7 @@ touching code. Paths are relative to `END-TO-END-SIS/` unless noted.
 | `mobile/` | earlier admin-only prototype | legacy, removable |
 | `backend/` | Node API: `/customer/*` (cost-stripped) + `/admin/*` (full) + `POST /auth/login`. `DATA_SOURCE=demo\|vapi` proxies any Vapi-shaped API. | ✅ built + verified |
 | `infra-api/` | **our own Vapi-compatible API** (Groq LLM/STT + Inworld TTS) with a call engine + cost accounting. Pluggable `Store` (`DB=memory\|postgres`). | ✅ built + verified |
-| `supabase/` | **backend-less** option: app → Supabase directly. Schema + RLS + cost-free `customer_calls` view + `call` Edge Function. | ✅ written, **not yet run on a real project** |
+| `supabase/` | **backend-less** option: app → Supabase directly. Schema + RLS + cost-free `customer_calls` view + `call` + `ingest-call` Edge Functions. | ✅ deployed + live smoke-tested |
 | `docs/` | architecture + research | ✅ |
 
 **Four interchangeable data planes** (all produce/consume the same Vapi-ish shapes):
@@ -45,7 +45,8 @@ table/view/RPC MUST exclude cost and filter by tenant, and MUST be tested.
 - A **Supabase project** (Cloud for the SMB tier; **self-hosted in Türkiye** for
   the consulate/health tier — same schema/RLS).
 - Env: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-  `GROQ_API_KEY`, `INWORLD_API_KEY`.
+  `GROQ_API_KEY`, `INWORLD_API_KEY`, `AFIYET_INGEST_SECRET`, and current
+  pricing values (`USD_TRY`, Verimor package fields, `PRICE_*` overrides).
 - Node ≥18, Expo (SDK 54 already pinned), Supabase CLI.
 - Confirm the **Inworld TTS request shape** against current Inworld docs and fix
   `supabase/functions/_shared/engine.ts` (`inworldTts`) + `infra-api/src/providers/inworld.js`
@@ -53,13 +54,13 @@ table/view/RPC MUST exclude cost and filter by tenant, and MUST be tested.
 
 ---
 
-## 2. Phase A — Stand up Supabase  (½–1 day)
+## 2. Phase A — Stand up Supabase  (done; re-run for new projects)
 1. Run `supabase/migrations/0001_init.sql` in the SQL editor (or `supabase db push`).
 2. Run `supabase/seed.sql`.
 3. Auth → create users (`lezzet@demo.com`, `admin@afiyet.ai`), then link roles via
    `public.profiles` (SQL snippet is at the bottom of `seed.sql`).
-4. `supabase secrets set GROQ_API_KEY=… INWORLD_API_KEY=…` then
-   `supabase functions deploy call`.
+4. `supabase secrets set GROQ_API_KEY=… INWORLD_API_KEY=… AFIYET_INGEST_SECRET=…`
+   plus pricing vars, then deploy `call` and `ingest-call`.
 
 **Acceptance (must all pass):**
 - Signed in as the **customer**: `select * from customer_calls` returns that
@@ -107,21 +108,30 @@ Goal: `customer/` runs directly on Supabase; delete the dependency on our Node
 ---
 
 ## 4. Phase C — Real order extraction  (½ day)
-Right now `order_amount`/`items`/`customerName` are 0/empty on live calls (revenue
-shows ₺0). In `supabase/functions/_shared/engine.ts`:
+Implemented in both engines. In `supabase/functions/_shared/engine.ts` and
+`infra-api/src/engine.js`:
 - After the LLM turn, add a **structured-data pass** (a 2nd Groq call in JSON
   mode, or Groq tool/JSON output) that extracts `{ intent, items, total,
   customerName }` per `assistant.analysisPlan.structuredDataSchema`.
 - Write those to the call row (`order_amount`, `analysis.structuredData`).
 
 **Acceptance:** a call saying "iki pizza, toplam 420 lira" yields `order_amount=420`
-and items; customer revenue/avg-ticket become real. Mirror the same in
-`infra-api/src/engine.js` to keep the two engines in parity.
+and items; customer revenue/avg-ticket become real.
 
 ---
 
 ## 5. Phase D — Real voice (telephony + streaming)  (1–2 weeks)
 Edge Functions are fine for **web/test** calls, not real-time phone audio.
+- **Implemented scaffold:** `supabase/functions/ingest-call` and
+  `infra-api` `/telephony/ingest-call` accept completed worker calls with
+  measured `durationSec`, `audioSec`, provider usage, recording path, and Verimor
+  CDR. These write `calls`, `call_usage_events`, `telephony_cdrs`,
+  `cost_reconciliations`, and `audit_log`.
+- **Worker bridge:** root `apps/voice-agent` now posts completed calls to
+  Supabase `ingest-call` when `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+  `AFIYET_INGEST_SECRET` are set.
+- **Implemented cost control:** cheap-route pricing defaults to Groq 8B +
+  Inworld 1.5 Mini + Verimor package math; over-target calls are flagged.
 - **Inbound phone:** stand up a persistent voice worker — reuse the sovereign
   cascade in the parent repo: `afiyet-ai` `apps/voice-agent` + `packages/*`
   (STT/LLM/TTS providers, streaming, barge-in filler already built and tested).
@@ -130,20 +140,21 @@ Edge Functions are fine for **web/test** calls, not real-time phone audio.
   `../docs/self-hosted-architecture.md`.
 - **Sovereign tier:** self-host Supabase **and** the voice worker in Türkiye.
 
-**Acceptance:** a real inbound call produces a `calls` row (transcript, order,
+**Remaining acceptance:** connect the worker to real Verimor/Jambonz media and
+prove a live inbound call produces a `calls` row (transcript, order, reconciled
 cost) visible in both customer and admin views.
 
 ---
 
 ## 6. Phase E — Harden  (ongoing)
-- **RLS test suite** — the redaction is now DB-enforced, so a policy bug = a
-  business incident. Write automated tests that assert a customer JWT can't read
-  cost via any table/view/rpc.
-- **Storage** for recordings (`recording_url` → Supabase Storage, tenant-scoped
-  bucket policies).
-- **Audit log** — port `afiyet-ai/packages/domain/audit-log.js` (hash-chained)
-  for regulated tiers.
-- Rate limiting, input validation, error surfaces, `supabase.functions` retries.
+- **RLS/schema tests:** added repo tests that assert `customer_calls` has no cost
+  fields and cost tables are admin-only.
+- **Storage:** `call-recordings` private bucket + tenant-scoped policies added in
+  migration `0002_production_hardening.sql`.
+- **Audit log:** hash-chained audit events added in `infra-api/src/audit.js` and
+  Supabase `audit_log`.
+- **Still harden next:** real provider smoke tests, retry/backoff on provider
+  failures, production rate-limit enforcement, invoice import automation.
 
 ---
 
@@ -175,11 +186,14 @@ cost) visible in both customer and admin views.
 ---
 
 ## Known gaps / risks
-- `supabase/` SQL has **not been run** against a real Postgres — verify in Phase A.
+- Production hardening migration `0002_production_hardening.sql` is deployed to
+  the live project.
+- `ingest-call` is deployed and protected with `AFIYET_INGEST_SECRET`.
 - **Inworld** request/response shape has been aligned to current docs, but still needs a real-key smoke test.
 - **Order total extraction** now exists in both engines; still needs real-call QA against messy Turkish orders.
 - App now supports direct Supabase when `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` are set.
-- **Telephony not wired** — web/test calls only (Phase D).
+- **Telephony media not wired** — completed-call/CDR ingest exists, but live
+  Verimor/Jambonz media needs provider credentials and a worker deployment.
 - `security_invoker=false` on `customer_calls` relies on the view being owned by a
   role that bypasses RLS (Supabase `postgres`) — confirm after migration.
 

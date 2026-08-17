@@ -5,7 +5,7 @@ import { groqReady, llmComplete, sttTranscribe } from './providers/groq.js';
 import { synthesize } from './providers/inworld.js';
 import { computeCost } from './pricing.js';
 
-export async function runCall(assistant, { input, audio } = {}) {
+export async function runCall(assistant, { input, audio, audioSec: measuredAudioSec, durationSec: measuredDurationSec, providerUsage } = {}) {
   const started = Date.now();
   const messages = [...(assistant.model?.messages || [])];
   const turns = [{ role: 'bot', message: assistant.firstMessage, time: started }];
@@ -18,6 +18,7 @@ export async function runCall(assistant, { input, audio } = {}) {
     userText = stt.text;
     audioSec += stt.audioSec;
   }
+  if (Number.isFinite(Number(measuredAudioSec))) audioSec = Math.max(audioSec, Number(measuredAudioSec));
 
   if (userText) {
     turns.push({ role: 'user', message: userText, time: Date.now() });
@@ -37,8 +38,10 @@ export async function runCall(assistant, { input, audio } = {}) {
   promptTokens += extraction.promptTokens;
   completionTokens += extraction.completionTokens;
 
-  const durationSec = Math.max(audioSec, Math.round((Date.now() - started) / 1000), 2);
-  const cost = computeCost({ audioSec, promptTokens, completionTokens, ttsChars, durationSec });
+  const durationSec = Number.isFinite(Number(measuredDurationSec))
+    ? Number(measuredDurationSec)
+    : Math.max(audioSec, Math.round((Date.now() - started) / 1000), 2);
+  const cost = computeCost({ audioSec, promptTokens, completionTokens, ttsChars, durationSec, providerUsage });
 
   return {
     messages: turns,
@@ -84,7 +87,7 @@ async function extractStructuredData({ userText = '', assistantText = '', assist
   try {
     const llm = await llmComplete({
       messages,
-      model: assistant.model?.model || 'llama-3.3-70b-versatile',
+      model: assistant.model?.model || 'llama-3.1-8b-instant',
       temperature: 0,
       maxTokens: 220,
       responseFormat: { type: 'json_object' }

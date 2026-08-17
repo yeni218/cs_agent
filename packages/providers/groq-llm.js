@@ -3,7 +3,7 @@ import Groq from 'groq-sdk';
 export class GroqLlmProvider {
   constructor({
     apiKey = process.env.GROQ_API_KEY,
-    model = process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile'
+    model = process.env.GROQ_LLM_MODEL || 'llama-3.1-8b-instant'
   } = {}) {
     this.apiKey = apiKey;
     this.client = null;

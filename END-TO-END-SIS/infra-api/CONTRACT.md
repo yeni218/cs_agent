@@ -23,7 +23,7 @@ Base URL: `http://localhost:8790` · Auth: `Authorization: Bearer <API_KEY>` (if
   "name": "Afiyet Sipariş Asistanı",
   "createdAt": "…", "updatedAt": "…",
   "transcriber": { "provider": "groq", "model": "whisper-large-v3-turbo", "language": "tr" },
-  "model": { "provider": "groq", "model": "llama-3.3-70b-versatile", "temperature": 0.3, "maxTokens": 250,
+  "model": { "provider": "groq", "model": "llama-3.1-8b-instant", "temperature": 0.3, "maxTokens": 250,
              "messages": [{ "role": "system", "content": "…" }] },
   "voice": { "provider": "inworld", "voiceId": "Ashley" },
   "firstMessage": "Merhaba, size nasıl yardımcı olabilirim?",
@@ -39,7 +39,7 @@ only the `provider` values differ (`groq`, `inworld`).
 | Method | Path | Body |
 |---|---|---|
 | GET | `/call?limit=&assistantId=` | — |
-| POST | `/call` | `{ assistantId, type?, customer?, input?, audio? }` |
+| POST | `/call` | `{ assistantId, type?, customer?, input?, audio?, durationSec?, audioSec?, providerUsage? }` |
 | GET | `/call/{id}` | — |
 | PATCH | `/call/{id}` | partial |
 | DELETE | `/call/{id}` | — |
@@ -60,7 +60,9 @@ Without them the call stays `queued` for a telephony webhook to drive.
   "recordingUrl": null,
   "analysis": { "summary": "…", "structuredData": { "intent": "order", "items": [], "total": 0 }, "successEvaluation": "success" },
   "cost": 0.021,
-  "costBreakdown": { "transport": 0, "stt": 0, "llm": 0, "tts": 0, "vapi": 0, "total": 0.021,
+  "costBreakdown": { "transport": 0, "stt": 0, "llm": 0, "tts": 0, "media": 0,
+                     "platform": 0, "vapi": 0, "total": 0.015,
+                     "perMinute": 0.015, "targetStatus": "ok",
                      "llmPromptTokens": 0, "llmCompletionTokens": 0, "ttsCharacters": 0 }
 }
 ```
@@ -71,6 +73,33 @@ changes**.
 ## Phone numbers
 `GET/POST /phone-number`, `GET/PATCH/DELETE /phone-number/{id}` →
 `{ id, number, provider, assistantId, status }`.
+
+## Production telephony and cost proofing
+
+These routes are not part of Vapi's public contract; they are our production
+surface for the self-hosted worker and Verimor reconciliation.
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `/telephony/ingest-call` | completed call from worker: `{ assistantId, tenantId?, externalCallId?, messages?, transcript?, analysis?, durationSec, audioSec?, usage?, providerUsage?, recordingPath? }` |
+| POST | `/telephony/verimor/cdr` | Verimor CDR: `{ callId? externalCallId?, tenantId?, durationSec, billedSec, costTry, exchangeRate }` |
+| GET | `/admin/cost-report?tenantId=&limit=` | blended COGS/min report |
+
+`providerUsage` can override estimates with actual invoice values:
+
+```json
+{
+  "sttUsd": 0.0007,
+  "llmUsd": 0.0001,
+  "ttsUsd": 0.0036,
+  "transportUsd": 0.0063,
+  "mediaUsd": 0,
+  "platformUsd": 0.0025
+}
+```
+
+If a Verimor CDR changes the actual call cost by more than `$0.002`, the
+reconciliation status becomes `review`.
 
 ## Switching Vapi ↔ us
 In `END-TO-END-SIS/backend`:

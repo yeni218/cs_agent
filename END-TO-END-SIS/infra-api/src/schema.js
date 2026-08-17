@@ -23,7 +23,7 @@ export function buildAssistant(input = {}) {
     },
     model: {
       provider: input.model?.provider || 'groq',              // Groq LLM
-      model: input.model?.model || 'llama-3.3-70b-versatile',
+      model: input.model?.model || 'llama-3.1-8b-instant',
       temperature: input.model?.temperature ?? 0.3,
       maxTokens: input.model?.maxTokens ?? 250,
       messages: input.model?.messages || [{ role: 'system', content: input.systemPrompt || 'Sen yardımcı bir sesli asistansın.' }]

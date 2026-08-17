@@ -23,6 +23,21 @@ This note records what was done so another agent can continue without guessing.
    - `lezzet@demo.com` -> customer, tenant `t_lezzet`
    - `admin@afiyet.ai` -> admin
 9. Wrote the customer app's local Supabase env in `customer/.env`.
+10. Added production hardening locally:
+    - `supabase/migrations/0002_production_hardening.sql`
+    - `supabase/functions/ingest-call`
+    - usage events, Verimor CDRs, cost reconciliations, audit log, private
+      recording bucket policies
+    - cheap-route pricing defaults for Groq 8B + Inworld 1.5 Mini + Verimor
+11. Applied `0002_production_hardening.sql` to the live project.
+12. Set `AFIYET_INGEST_SECRET` and pricing secrets on the live project.
+13. Deployed both `call` and `ingest-call` Edge Functions.
+14. Ran a live protected `ingest-call` smoke test:
+    - inserted an order call for `t_lezzet`
+    - reconciled cost: `$0.018313`, status `ok`, target status `ok`
+    - customer account saw the call through `customer_calls` with no cost fields
+    - customer account saw `0` base `calls` rows
+    - admin account saw `calls.cost`, `cost_status`, and `admin_cost_daily`
 
 ## Important Local-Only Files
 
@@ -32,6 +47,8 @@ These are intentionally ignored by git and must not be committed:
 - `supabase/.temp/db-password` contains the generated DB password used for linking.
 - `supabase/.temp/lezzet-password` contains the generated customer login password.
 - `supabase/.temp/admin-password` contains the generated admin login password.
+- `supabase/.temp/ingest-secret` contains the generated `AFIYET_INGEST_SECRET`
+  for the deployed `ingest-call` function.
 
 ## Commands Used
 
@@ -52,6 +69,21 @@ npx supabase@latest db push \
   --password "$(cat supabase/.temp/db-password)"
 
 npx supabase@latest functions deploy call \
+  --project-ref tdmfpiynrybrnehnoaot \
+  --use-api \
+  --output pretty
+
+npx supabase@latest secrets set \
+  AFIYET_INGEST_SECRET="$(cat supabase/.temp/ingest-secret)" \
+  USD_TRY=47.52 \
+  VERIMOR_PACKAGE_MINUTES=10000 \
+  VERIMOR_PACKAGE_PRICE_TRY=2999 \
+  VERIMOR_OVERAGE_TRY_PER_MIN=0.99 \
+  VERIMOR_BILLING_INCREMENT_SEC=6 \
+  PRICE_TARGET_PER_MIN=0.02 \
+  --project-ref tdmfpiynrybrnehnoaot
+
+npx supabase@latest functions deploy ingest-call \
   --project-ref tdmfpiynrybrnehnoaot \
   --use-api \
   --output pretty
@@ -77,8 +109,8 @@ Expo web export also passed with `customer/.env` loaded.
 
 ## Still Needed For Real AI Calls
 
-Groq and Inworld secrets are not set yet. Until they are set, the Edge Function
-uses mock-safe fallback behavior.
+Groq and Inworld secrets are not set yet. Until Groq and Inworld are set, the
+Edge Functions use mock-safe fallback behavior for AI generation.
 
 ```bash
 cd END-TO-END-SIS
@@ -88,14 +120,23 @@ npx supabase@latest secrets set \
   --project-ref tdmfpiynrybrnehnoaot
 ```
 
-Then redeploy if function code changes:
+Redeploy after function code changes:
 
 ```bash
 npx supabase@latest functions deploy call \
   --project-ref tdmfpiynrybrnehnoaot \
   --use-api \
   --output pretty
+
+npx supabase@latest functions deploy ingest-call \
+  --project-ref tdmfpiynrybrnehnoaot \
+  --use-api \
+  --output pretty
 ```
+
+Use `ingest-call` for real worker/Verimor calls. It stores internal costs and
+returns an internal response only; customers still read the cost-free
+`customer_calls` view.
 
 ## Running The App
 

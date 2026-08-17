@@ -6,9 +6,13 @@
 //
 // Auth: Authorization: Bearer <API_KEY>  (set API_KEY to require it)
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { createStore } from './src/store.js';
 import { buildAssistant, applyAssistantPatch, buildCall, buildPhoneNumber } from './src/schema.js';
 import { runCall } from './src/engine.js';
+import { appendAuditEvent } from './src/audit.js';
+import { computeCost } from './src/pricing.js';
+import { costReport, normalizeVerimorCdr, reconcileCallCost } from './src/telephony.js';
 import { groqReady } from './src/providers/groq.js';
 import { inworldReady } from './src/providers/inworld.js';
 
@@ -33,6 +37,36 @@ function send(res, status, body) {
 const readBody = (req) => new Promise((resolve) => {
   let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { resolve({}); } });
 });
+
+async function recordUsageEvents(call) {
+  const b = call.costBreakdown || {};
+  const parts = [
+    ['groq_stt', 'stt'],
+    ['groq_llm', 'llm'],
+    ['inworld_tts', 'tts'],
+    ['telephony', 'transport'],
+    ['media', 'media'],
+    ['platform', 'platform']
+  ];
+  for (const [source, key] of parts) {
+    if (!Number.isFinite(Number(b[key])) || Number(b[key]) === 0) continue;
+    await store.put('usageEvents', {
+      id: `use_${randomUUID().slice(0, 12)}`,
+      callId: call.id,
+      assistantId: call.assistantId || null,
+      tenantId: call.tenantId || null,
+      source,
+      metric: key,
+      amountUsd: Number(b[key]),
+      raw: b,
+      createdAt: new Date().toISOString()
+    });
+  }
+}
+
+function transcriptFromMessages(messages = []) {
+  return messages.map((m) => `${m.role === 'user' ? 'User' : 'AI'}: ${m.message || m.text || m.content || ''}`).join('\n');
+}
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -81,14 +115,22 @@ const server = http.createServer(async (req, res) => {
           call.status = 'in-progress';
           call.startedAt = new Date().toISOString();
           const audio = body.audio ? Buffer.from(body.audio, 'base64') : null;
-          const result = await runCall(assistant, { input: body.input, audio });
+          const result = await runCall(assistant, {
+            input: body.input,
+            audio,
+            audioSec: body.audioSec,
+            durationSec: body.durationSec,
+            providerUsage: body.providerUsage
+          });
           Object.assign(call, {
             status: 'ended', endedReason: 'customer-ended-call', endedAt: new Date().toISOString(),
             messages: result.messages, transcript: result.transcript, analysis: result.analysis,
-            cost: result.cost, costBreakdown: result.costBreakdown
+            cost: result.cost, costBreakdown: result.costBreakdown, durationSec: result.durationSec
           });
         }
-        return send(res, 201, await store.put('calls', call));
+        const saved = await store.put('calls', call);
+        if (saved.status === 'ended') await recordUsageEvents(saved);
+        return send(res, 201, saved);
       }
       if (id) {
         const c = await store.get('calls', id);
@@ -98,6 +140,116 @@ const server = http.createServer(async (req, res) => {
         if (method === 'DELETE') { await store.del('calls', id); return send(res, 200, c); }
       }
       return send(res, 405, { message: 'Method not allowed' });
+    }
+
+    // -------- Telephony / production ingestion --------
+    if (seg[0] === 'telephony') {
+      if (seg[1] === 'ingest-call' && method === 'POST') {
+        const body = await readBody(req);
+        const assistant = body.assistantId
+          ? await store.get('assistants', body.assistantId)
+          : (await store.list('assistants', { limit: 1 }))[0];
+        if (!assistant) return send(res, 400, { message: 'assistantId required (no assistants exist)' });
+
+        const call = buildCall({
+          id: body.callId || body.id,
+          assistantId: assistant.id,
+          type: body.type || 'inboundPhoneCall',
+          customer: body.customer || { number: body.from || null, name: body.customerName || null }
+        });
+        call.tenantId = body.tenantId || body.tenant_id || assistant.tenantId || null;
+        call.externalCallId = body.externalCallId || body.external_call_id || null;
+        call.status = 'ended';
+        call.endedReason = body.endedReason || 'telephony-ended-call';
+        call.startedAt = body.startedAt || new Date(Date.now() - Number(body.durationSec || 0) * 1000).toISOString();
+        call.endedAt = body.endedAt || new Date().toISOString();
+
+        let result;
+        if (body.input || body.audio) {
+          result = await runCall(assistant, {
+            input: body.input,
+            audio: body.audio ? Buffer.from(body.audio, 'base64') : null,
+            audioSec: body.audioSec,
+            durationSec: body.durationSec,
+            providerUsage: body.providerUsage
+          });
+        } else {
+          const usage = body.usage || {};
+          const costBreakdown = computeCost({
+            audioSec: body.audioSec ?? usage.audioSec ?? body.durationSec ?? 0,
+            promptTokens: usage.promptTokens || usage.llmPromptTokens || 0,
+            completionTokens: usage.completionTokens || usage.llmCompletionTokens || 0,
+            ttsChars: usage.ttsChars || usage.ttsCharacters || 0,
+            durationSec: body.durationSec || 0,
+            providerUsage: body.providerUsage
+          });
+          result = {
+            messages: body.messages || [],
+            transcript: body.transcript || transcriptFromMessages(body.messages || []),
+            analysis: body.analysis || {
+              summary: body.summary || body.transcript || 'Telephony call ingested',
+              structuredData: body.structuredData || {},
+              successEvaluation: body.answered === false ? 'failed' : 'success'
+            },
+            costBreakdown,
+            cost: body.cost ?? costBreakdown.total,
+            durationSec: body.durationSec || costBreakdown.durationSeconds || 0
+          };
+        }
+
+        Object.assign(call, {
+          answered: body.answered !== false,
+          outcome: body.outcome || result.analysis?.structuredData?.intent || 'faq',
+          orderAmount: Number(body.orderAmount ?? body.order_amount ?? result.analysis?.structuredData?.total ?? 0),
+          customerName: body.customerName || result.analysis?.structuredData?.customerName || null,
+          summary: result.analysis?.summary || body.summary || '',
+          durationSec: result.durationSec,
+          messages: result.messages,
+          transcript: result.transcript,
+          analysis: result.analysis,
+          recordingUrl: body.recordingUrl || body.recording_url || body.recordingPath || null,
+          cost: result.cost,
+          costBreakdown: result.costBreakdown
+        });
+
+        const saved = await store.put('calls', call);
+        await recordUsageEvents(saved);
+        await appendAuditEvent(store, { action: 'telephony.call_ingested', entityType: 'call', entityId: saved.id, metadata: { externalCallId: saved.externalCallId } });
+        return send(res, 201, saved);
+      }
+
+      if (seg[1] === 'verimor' && seg[2] === 'cdr' && method === 'POST') {
+        const cdr = normalizeVerimorCdr(await readBody(req));
+        await store.put('telephonyCdrs', cdr);
+        let call = cdr.callId ? await store.get('calls', cdr.callId) : null;
+        if (!call && cdr.externalCallId) call = (await store.list('calls', { limit: 1, where: { externalCallId: cdr.externalCallId } }))[0] || null;
+
+        let reconciliation = null;
+        if (call) {
+          reconciliation = reconcileCallCost(call, cdr);
+          call.durationSec = cdr.durationSec || call.durationSec;
+          call.cost = reconciliation.actualCost;
+          call.costBreakdown = reconciliation.breakdown;
+          call.updatedAt = new Date().toISOString();
+          await store.put('calls', call);
+          await store.put('reconciliations', reconciliation);
+          await appendAuditEvent(store, {
+            action: 'telephony.cdr_reconciled',
+            entityType: 'call',
+            entityId: call.id,
+            metadata: { cdrId: cdr.id, delta: reconciliation.delta, status: reconciliation.status }
+          });
+        }
+        return send(res, 201, { cdr, reconciliation });
+      }
+
+      return send(res, 404, { message: `no telephony route /${seg.slice(1).join('/')}` });
+    }
+
+    if (seg[0] === 'admin' && seg[1] === 'cost-report' && method === 'GET') {
+      const tenantId = url.searchParams.get('tenantId');
+      const calls = await store.list('calls', { limit, where: tenantId ? { tenantId } : {} });
+      return send(res, 200, costReport(calls));
     }
 
     // ---------------- Phone numbers ----------------
