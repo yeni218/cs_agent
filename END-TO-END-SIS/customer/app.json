@@ -1,15 +1,32 @@
 {
   "expo": {
     "name": "AfiyetSesli",
-    "slug": "e2e-sis-customer",
+    "slug": "csagent",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": { "backgroundColor": "#f5f7fb" },
-    "ios": { "supportsTablet": true },
-    "android": { "usesCleartextTraffic": true },
-    "web": { "bundler": "metro" },
-    "plugins": ["expo-asset"]
+    "splash": {
+      "backgroundColor": "#f5f7fb"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.afiyetsesli.app"
+    },
+    "android": {
+      "package": "com.afiyetsesli.app"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8ab60a41-027d-4dde-8420-26f13d7af753"
+      }
+    }
   }
 }
