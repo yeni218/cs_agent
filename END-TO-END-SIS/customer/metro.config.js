@@ -3,9 +3,10 @@ const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
-// Supabase realtime-js pulls in `ws` which requires Node's `stream`.
-// React Native has its own WebSocket — shim stream to readable-stream.
+// @supabase/realtime-js bundles `ws` (Node WebSocket) which pulls in Node's
+// `stream`. React Native has a global WebSocket — redirect both to shims.
 config.resolver.extraNodeModules = {
+  ws: path.resolve(__dirname, 'shims/ws.js'),
   stream: path.resolve(__dirname, 'node_modules/readable-stream'),
 };
 
