@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SESSION_KEY, DEFAULT_BASE_URL } from './src/config.js';
+import { SESSION_KEY } from './src/config.js';
 import { ApiClient } from './src/api/client.js';
 import { theme } from './src/components/ui.js';
 import LoginScreen from './src/screens/LoginScreen.js';
@@ -62,7 +62,7 @@ function Root() {
   };
 
   const client = useMemo(
-    () => (session ? new ApiClient({ baseUrl: session.baseUrl, session, demo: session.demo }) : null),
+    () => (session ? new ApiClient({ session }) : null),
     [session]
   );
 
@@ -72,7 +72,7 @@ function Root() {
     return (
       <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <StatusBar style="dark" />
-        <LoginScreen defaultBaseUrl={DEFAULT_BASE_URL} onLogin={onLogin} />
+        <LoginScreen onLogin={onLogin} />
       </View>
     );
   }
@@ -89,7 +89,7 @@ function Root() {
         <View style={{ flex: 1 }}>
           <Text style={styles.brand}>Afiyet<Text style={{ color: theme.accent }}>Sesli</Text></Text>
           <Text style={styles.sub} numberOfLines={1}>
-            {session.role === 'admin' ? 'Yönetici' : 'Restoran'} · {session.name}{session.demo ? ' · Demo' : ''}
+            {session.role === 'admin' ? 'Yönetici' : 'Restoran'} · {session.name}
           </Text>
         </View>
         <TouchableOpacity onPress={onLogout} style={styles.logoutBtn} hitSlop={10}>

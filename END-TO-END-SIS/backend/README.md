@@ -1,5 +1,11 @@
 # E2E-SIS Backend — one brain, two faces, two data sources
 
+> ⚠️ **DEPRECATED / OPTIONAL.** The app now talks **directly to Supabase**
+> (Supabase is the backend; RLS enforces redaction). This Node service is no
+> longer used by the app. It's kept only as the **Vapi-provider bridge** — i.e.
+> a redacting proxy if you ever serve customers from raw Vapi data instead of
+> Supabase. For normal operation you don't run this.
+
 Serves the app's endpoints and, crucially, **enforces cost redaction server-side**
 for the customer scope — for both demo data and live Vapi data.
 

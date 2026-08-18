@@ -1,57 +1,41 @@
 # AfiyetSesli — The App (one app, role-based login)
 
-> Folder is named `customer/` for historical reasons — it is now the **single
-> unified app**. Same binary for restaurants and for us; **the login decides
-> which experience you get.**
+> Folder is named `customer/` for historical reasons — it's the **single unified
+> app**. Same binary for restaurants and for us; the **login decides** which
+> experience you get.
 
 - **Restaurant login** → Voicebit-like view: phone revenue, orders, answer rate,
-  agent, plan usage. **Never shows our costs.**
+  agent config, plan usage. **Never shows our costs.**
 - **Admin login** (us) → ops cockpit: MRR, COGS, gross margin, per-tenant margins,
   system health, per-call cost breakdown.
 
-The account's `role` (+ `tenantId`) comes back from `/auth/login`; the app renders
-the matching tabs and the client sends the matching scope header, so the server
-returns customer-safe (cost-stripped) or full-economics data accordingly.
+The app talks **directly to Supabase** — Supabase *is* the backend (auth,
+tenancy, RLS-enforced customer cost redaction, call store). There is no Node
+backend and no demo mode.
 
 ## Run
 ```bash
-npm install            # already installed
-npx expo start         # w = web, or scan QR in Expo Go
+npm install
+cp .env.example .env      # set EXPO_PUBLIC_SUPABASE_URL + EXPO_PUBLIC_SUPABASE_ANON_KEY
+npx expo start            # w = web, or scan QR in Expo Go
 ```
+Log in with a Supabase Auth user whose role/tenant is set in `public.profiles`
+(a signup auto-creates the profile via trigger; assign role/tenant via user
+metadata or an `update public.profiles ...`).
 
-### Demo logins (no backend needed — tick "Demo modu")
-| Role | Email | Password |
-|---|---|---|
-| Restaurant (customer) | `lezzet@demo.com` | `demo` |
-| Restaurant (customer) | `kebap@demo.com` | `demo` |
-| Admin (us) | `admin@afiyet.ai` | `admin` |
-
-Or use the **Hızlı demo girişi** buttons on the login screen.
-
-### Live logins
-Preferred path is direct Supabase:
-
-```bash
-cp .env.example .env
-# set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY
-npx expo start
-```
-
-Untick "Demo modu" and log in with Supabase Auth users linked in
-`public.profiles`. The app reads customer data from `customer_calls`, so customer
-responses do not contain cost columns.
-
-If Supabase env vars are absent, live mode still supports the old backend
-fallback: run `../backend`, keep the URL as `http://localhost:8787`, and log in
-with the same accounts. On a phone use your PC's LAN IP.
-
-## Structure
-- `src/screens/LoginScreen.js` — single login (customer + admin).
-- customer screens: `HomeScreen`, `OrdersScreen`, `AgentScreen`, `PlanScreen`.
-- admin screens: `AdminHomeScreen` (MRR/margins/tenants/health), `AdminCallsScreen` (cost breakdown).
-- `src/api/supabase.js` — direct Supabase client.
-- `src/api/client.js` — session-aware; direct Supabase when configured, backend fallback otherwise.
+## How it's wired
+- `src/api/supabase.js` — the Supabase client.
+- `src/api/auth.js` — `supabase.auth.signInWithPassword` → reads `profiles(role, tenant_id)`.
+- `src/api/customer.js` — reads the cost-free `customer_calls` view + `assistants`/`tenants`.
+- `src/api/admin.js` — reads `calls` (with cost) + `tenants`, computes margins client-side.
+- `src/api/shape.js` — maps Postgres rows to the shapes the screens use.
 - `App.js` — session gate + role-based tabs + logout.
 
-The `../mobile/` app is the earlier admin-only prototype and is now superseded by
-this app's admin role — it can be removed.
+The redaction guarantee is **server-side** (Supabase RLS + the `customer_calls`
+view has no cost columns), so a customer literally cannot fetch cost.
+
+## Backend / provider (optional)
+`../backend/` and `../infra-api/` are legacy/optional — the Vapi-provider &
+portability layer. The app no longer uses them. To run calls on **Vapi** instead
+of our Groq+Inworld engine, point a Vapi assistant's Server URL at the
+`ingest-call` Edge Function; results flow into the same Supabase the app reads.

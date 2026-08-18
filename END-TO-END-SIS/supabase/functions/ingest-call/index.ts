@@ -6,7 +6,7 @@ import { computeCost } from '../_shared/engine.ts';
 
 const cors = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'authorization, content-type, apikey, x-afiyet-ingest-secret',
+  'access-control-allow-headers': 'authorization, content-type, apikey, x-afiyet-ingest-secret, x-vapi-secret',
   'access-control-allow-methods': 'POST, OPTIONS'
 };
 const json = (body: unknown, status = 200) =>
@@ -17,11 +17,18 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-  const secret = Deno.env.get('AFIYET_INGEST_SECRET') || '';
-  if (secret && req.headers.get('x-afiyet-ingest-secret') !== secret) return json({ error: 'unauthorized' }, 401);
+  // Accept our own worker secret OR Vapi's webhook secret. If neither is
+  // configured, allow (dev only).
+  const ingestSecret = Deno.env.get('AFIYET_INGEST_SECRET') || '';
+  const vapiSecret = Deno.env.get('VAPI_WEBHOOK_SECRET') || '';
+  const okIngest = ingestSecret && req.headers.get('x-afiyet-ingest-secret') === ingestSecret;
+  const okVapi = vapiSecret && req.headers.get('x-vapi-secret') === vapiSecret;
+  if (!okIngest && !okVapi && (ingestSecret || vapiSecret)) return json({ error: 'unauthorized' }, 401);
 
   try {
-    const body = await req.json();
+    let body = await req.json();
+    // Vapi end-of-call-report webhook -> our internal ingest shape.
+    if (body?.message?.type === 'end-of-call-report') body = fromVapiWebhook(body.message);
     const admin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -164,6 +171,34 @@ function normalizeCdr(cdr: any, defaults: { callId: string; tenantId: string; ex
     exchange_rate: exchangeRate,
     cost_usd: costUsd,
     raw: cdr
+  };
+}
+
+// Map Vapi's end-of-call-report webhook to our internal ingest payload.
+function fromVapiWebhook(msg: any) {
+  const call = msg.call || {};
+  const artifact = msg.artifact || {};
+  const analysis = msg.analysis || {};
+  const cb = msg.costBreakdown || {};
+  const answered = msg.endedReason ? !/no-answer|voicemail|busy|did-not-answer/i.test(msg.endedReason) : true;
+  return {
+    externalCallId: call.id,
+    assistantId: call.assistantId,
+    type: call.type || 'inboundPhoneCall',
+    status: 'ended',
+    answered,
+    durationSec: msg.durationSeconds ?? msg.duration,
+    outcome: analysis.structuredData?.intent,
+    orderAmount: analysis.structuredData?.total,
+    customerName: call.customer?.name || analysis.structuredData?.customerName || call.customer?.number,
+    summary: analysis.summary,
+    messages: artifact.messages || msg.messages || [],
+    analysis,
+    recordingUrl: artifact.recordingUrl || msg.recordingUrl || null,
+    cost: msg.cost,
+    costBreakdown: { ...cb, platform: cb.platform ?? cb.vapi ?? 0 },
+    startedAt: msg.startedAt,
+    endedAt: msg.endedAt
   };
 }
 
