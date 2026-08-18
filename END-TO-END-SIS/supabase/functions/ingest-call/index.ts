@@ -111,13 +111,16 @@ Deno.serve(async (req) => {
       }).eq('id', id);
     }
 
-    await appendAudit(admin, {
-      action: 'call.ingested',
-      entityType: 'call',
-      entityId: id,
-      tenantId,
-      metadata: { externalCallId: row.external_call_id, reconciled: !!reconciliation }
+    // Serialized hash-chained audit (advisory lock in SQL — no chain race).
+    await admin.rpc('append_audit_event', {
+      p_actor: 'ingest-call',
+      p_action: 'call.ingested',
+      p_entity_type: 'call',
+      p_entity_id: id,
+      p_tenant_id: tenantId,
+      p_metadata: { externalCallId: row.external_call_id, reconciled: !!reconciliation }
     });
+    await logRequest(admin, tenantId, 'ingest-call', 'ok');
 
     return json({ id, tenantId, cost: reconciliation?.actual_cost_usd ?? row.cost, reconciliation }, 201);
   } catch (e) {
@@ -164,22 +167,9 @@ function normalizeCdr(cdr: any, defaults: { callId: string; tenantId: string; ex
   };
 }
 
-async function appendAudit(admin: any, event: { action: string; entityType: string; entityId: string; tenantId: string; metadata: any }) {
-  const { data: prev } = await admin.from('audit_log').select('hash').order('created_at', { ascending: false }).limit(1).maybeSingle();
-  const payload = {
-    actor: 'ingest-call',
-    action: event.action,
-    entity_type: event.entityType,
-    entity_id: event.entityId,
-    tenant_id: event.tenantId,
-    previous_hash: prev?.hash || null,
-    metadata: event.metadata
-  };
-  const hash = await sha256(JSON.stringify(payload));
-  await admin.from('audit_log').insert({ ...payload, hash });
-}
-
-async function sha256(input: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+// Best-effort observability; never fails the request.
+async function logRequest(admin: any, tenantId: string | null, functionName: string, status: string) {
+  try {
+    await admin.from('function_request_log').insert({ tenant_id: tenantId, function_name: functionName, status });
+  } catch (_) { /* non-fatal */ }
 }

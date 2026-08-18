@@ -73,6 +73,15 @@ Deno.serve(async (req) => {
       }));
     if (usageRows.length) await admin.from('call_usage_events').insert(usageRows);
 
+    // Serialized hash-chained audit + observability (both best-effort).
+    await admin.rpc('append_audit_event', {
+      p_actor: 'call', p_action: 'call.created', p_entity_type: 'call',
+      p_entity_id: id, p_tenant_id: assistant.tenant_id, p_metadata: { type: row.type }
+    }).then(() => {}, () => {});
+    await admin.from('function_request_log')
+      .insert({ tenant_id: assistant.tenant_id, function_name: 'call', status: 'ok' })
+      .then(() => {}, () => {});
+
     // Strip cost before returning.
     const { cost, cost_breakdown, ...safe } = row;
     return json(safe, 201);
