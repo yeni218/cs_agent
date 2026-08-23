@@ -24,7 +24,7 @@ $env:SUPABASE_ACCESS_TOKEN = "sbp_xxx"
 cd END-TO-END-SIS\supabase
 npx supabase link --project-ref <your-project-ref>
 
-# schema (applies 0001, 0002, 0003 in order)
+# schema (applies 0001 through 0004 in order)
 npx supabase db push
 # demo data (or run seed.sql in the SQL editor)
 npx supabase db execute --file seed.sql   # or paste seed.sql in Studio
@@ -45,6 +45,19 @@ raw_user_meta_data = { "role": "customer", "tenant_id": "t_lezzet" }   // or rol
 ```sql
 update public.profiles set role='customer', tenant_id='t_lezzet' where id='<uuid>';
 ```
+
+## Vapi assistant mapping
+Vapi sends its own assistant ID in an `end-of-call-report`. Map that ID to the
+Afiyet assistant that belongs to the customer tenant before making a test call:
+
+```sql
+update public.assistants
+set vapi_assistant_id = 'asst_from_vapi_dashboard'
+where id = 'asst_lezzet';
+```
+
+Each Vapi assistant ID can belong to only one Afiyet assistant. The
+`ingest-call` function resolves this mapping before it writes the call.
 
 ## The acceptance test (prove the redaction, run in SQL editor)
 Simulate a customer JWT and confirm they cannot reach cost:

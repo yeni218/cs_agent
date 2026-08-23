@@ -35,13 +35,28 @@ Deno.serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    const { data: assistant, error } = body.assistantId
-      ? await admin.from('assistants').select('*').eq('id', body.assistantId).single()
-      : { data: null, error: null };
-    if (error) return json({ error: error.message }, 400);
+    // Vapi uses its own `asst_...` identifiers. Resolve those to the Afiyet
+    // assistant so database foreign keys and tenant ownership stay internal.
+    let assistant = null;
+    if (body.assistantId) {
+      const byId = await admin.from('assistants').select('*').eq('id', body.assistantId).maybeSingle();
+      if (byId.error) return json({ error: byId.error.message }, 400);
+      assistant = byId.data;
+
+      if (!assistant) {
+        const byVapiId = await admin.from('assistants').select('*').eq('vapi_assistant_id', body.assistantId).maybeSingle();
+        if (byVapiId.error) return json({ error: byVapiId.error.message }, 400);
+        assistant = byVapiId.data;
+      }
+    }
 
     const tenantId = body.tenantId || body.tenant_id || assistant?.tenant_id;
-    if (!tenantId) return json({ error: 'tenantId or assistantId is required' }, 400);
+    if (!tenantId) {
+      return json({
+        error: 'Unknown assistant. Map this Vapi assistant ID to an Afiyet assistant before accepting calls.',
+        assistantId: body.assistantId || null
+      }, 422);
+    }
 
     const usage = body.usage || {};
     const durationSec = num(body.durationSec ?? body.duration_sec);
@@ -61,7 +76,7 @@ Deno.serve(async (req) => {
       id,
       external_call_id: body.externalCallId || body.external_call_id || null,
       tenant_id: tenantId,
-      assistant_id: body.assistantId || assistant?.id || null,
+      assistant_id: assistant?.id || null,
       type: body.type || 'inboundPhoneCall',
       status: body.status || 'ended',
       answered: body.answered !== false,
@@ -125,7 +140,11 @@ Deno.serve(async (req) => {
       p_entity_type: 'call',
       p_entity_id: id,
       p_tenant_id: tenantId,
-      p_metadata: { externalCallId: row.external_call_id, reconciled: !!reconciliation }
+      p_metadata: {
+        externalCallId: row.external_call_id,
+        externalAssistantId: body.assistantId || null,
+        reconciled: !!reconciliation
+      }
     });
     await logRequest(admin, tenantId, 'ingest-call', 'ok');
 
