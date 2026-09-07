@@ -26,6 +26,13 @@ export default function HomeScreen({ client }) {
 
   useEffect(() => { setLoading(true); load(); }, [load]);
 
+  // Keep the dashboard in sync with completed Vapi calls without revealing
+  // internal COGS fields through a Realtime subscription to public.calls.
+  useEffect(() => {
+    const timer = setInterval(load, 10_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
   if (loading) return <View style={styles.centered}><ActivityIndicator color={theme.accent} /></View>;
   if (!ov) return <View style={styles.centered}><Text style={styles.err}>{error || 'Veri yok'}</Text></View>;
 

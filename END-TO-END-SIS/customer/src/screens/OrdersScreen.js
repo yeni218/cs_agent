@@ -35,6 +35,13 @@ export default function OrdersScreen({ client }) {
 
   useEffect(() => { setLoading(true); load(); }, [load]);
 
+  // Customer calls come from the RLS-protected customer_calls view. Polling the
+  // view keeps the list current without exposing the internal calls table.
+  useEffect(() => {
+    const timer = setInterval(load, 10_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
   if (loading) return <View style={styles.centered}><ActivityIndicator color={theme.accent} /></View>;
   const visibleCalls = filter === 'all' ? calls : calls.filter((c) => c.outcome === filter);
 
