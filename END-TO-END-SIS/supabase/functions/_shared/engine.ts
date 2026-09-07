@@ -16,10 +16,12 @@ function verimorOveragePerSecond() {
 }
 
 const PRICING = {
+  // Real 2026 rates. Groq openai/gpt-oss-20b ($0.075/$0.30 per M), Whisper turbo
+  // ($0.04/hr), Inworld 1.5-mini (~$15/M chars). Verify [Q] items before pricing.
   sttPerSec: n(env('PRICE_STT_PER_SEC'), 0.04 / 3600),
-  llmInPer1k: n(env('PRICE_LLM_IN_PER_1K'), 0.00005),
-  llmOutPer1k: n(env('PRICE_LLM_OUT_PER_1K'), 0.00008),
-  ttsPer1kChars: n(env('PRICE_TTS_PER_1K_CHARS'), 0.009),
+  llmInPer1k: n(env('PRICE_LLM_IN_PER_1K'), 0.000075),
+  llmOutPer1k: n(env('PRICE_LLM_OUT_PER_1K'), 0.0003),
+  ttsPer1kChars: n(env('PRICE_TTS_PER_1K_CHARS'), 0.015),
   transportPerSec: n(env('PRICE_TRANSPORT_PER_SEC'), verimorPerSecond()),
   transportOveragePerSec: n(env('PRICE_TRANSPORT_OVERAGE_PER_SEC'), verimorOveragePerSecond()),
   transportBillingIncrementSec: n(env('VERIMOR_BILLING_INCREMENT_SEC'), 6),
@@ -114,7 +116,7 @@ export async function runTurn(assistant: any, {
   if (input) {
     turns.push({ role: 'user', message: input, time: Date.now() });
     messages.push({ role: 'user', content: input });
-    const llm = await groqComplete(messages, assistant.model?.model || 'llama-3.1-8b-instant', 0.3, 250);
+    const llm = await groqComplete(messages, assistant.model?.model || 'openai/gpt-oss-20b', 0.3, 400);
     assistantText = llm.content; promptTokens = llm.promptTokens; completionTokens = llm.completionTokens;
     turns.push({ role: 'bot', message: assistantText, time: Date.now() });
     const tts = await inworldTts(assistantText, assistant.voice?.voiceId || 'Ashley');
@@ -169,7 +171,7 @@ async function extractStructuredData({ input, assistantText, assistant }: { inpu
   try {
     const llm = await groqComplete(
       messages,
-      assistant.model?.model || 'llama-3.1-8b-instant',
+      assistant.model?.model || 'openai/gpt-oss-20b',
       0,
       220,
       { type: 'json_object' }

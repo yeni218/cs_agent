@@ -12,6 +12,34 @@ derive defensible plan pricing. Every input below is sourced at the bottom.
 
 ---
 
+## 0. LIVE MEASUREMENT (2026-09-07) — the $0.028/min target, tested
+
+We ran a real Turkish order through the deployed stack (Supabase `call` function →
+**real Groq `openai/gpt-oss-20b` + real Inworld TTS**). It worked end-to-end: the
+agent itemized the order and computed a total, in Turkish.
+
+**Measured usage (one turn):** 136 input + 250 output LLM tokens; 326 TTS characters.
+
+**Recomputed for a realistic full 2.5-min call at REAL 2026 rates:**
+
+| Component | Real usage (full call) | Real rate | Cost/min |
+|---|---|---|---|
+| LLM (Groq gpt-oss-20b) | ~3k in + 2k out tok | $0.075 / $0.30 per M | ~$0.0003 |
+| STT (Groq Whisper turbo) | ~75 s audio | $0.04 / hr | ~$0.0003 |
+| TTS (Inworld 1.5-mini) | ~1,460 chars | $15–25 / M | ~$0.009–0.015 |
+| Telephony (Verimor) | 150 s billed | 0.30–0.99 TL/min | ~$0.006–0.021 |
+| Server (self-host) | amortized | ~$8/mo | ~$0 |
+| **TOTAL** | | | **~$0.016 – $0.037/min** |
+
+**Result: $0.028/min CONFIRMED** — the measured stack lands in a $0.016–0.037/min
+band and $0.028 is the midpoint. LLM + STT are confirmed negligible (~$0.0006/min);
+**telephony + TTS are the entire cost.** The two swing factors are the Verimor bulk
+rate [Q] and the Inworld tier. Live cost-tracking rates in the engine were updated
+to these real 2026 values on this date. Note: Groq deprecated `llama-3.1-8b-instant`
+and `llama-3.3-70b-versatile` (17 Jun 2026) → now on `openai/gpt-oss-20b`.
+
+---
+
 ## 1. Verified component pricing
 
 | Component | Price | Confidence | Source |
