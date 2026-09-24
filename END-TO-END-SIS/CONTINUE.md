@@ -78,27 +78,37 @@ gpt-oss-20b LLM + Inworld TTS, logs to Supabase). See `agent/README.md`.
 
 ---
 
-## IMMEDIATE NEXT STEP (where we stopped)
-Because "nothing on the PC," the LiveKit **agent must be hosted by LiveKit Cloud itself**
-(their agent-deployment feature), not run locally.
+## PROGRESS 2026-09-24 — Verimor did their side; LiveKit project exists
+Verimor sent their official **LiveKit integration guide** (`resource/LiveKit ile Yapay Zeka
+Çağrı Entegrasyonu (Verimor Rehberi).pdf.pdf`) and an email (Fatih KAFADAR, Verimor):
+- ✅ **LiveKit project exists:** `afiyet-tj1bqfhh` (EU region).
+- ✅ **LiveKit SIP URI (inbound):** `afiyet-tj1bqfhh.eu.sip.livekit.cloud`
+- ✅ **Verimor already routed inbound calls** to that SIP URI (their side is DONE).
+- LiveKit project URL (for the agent): `wss://afiyet-tj1bqfhh.livekit.cloud` (confirm in Settings→Keys).
 
-**OPEN QUESTION being verified when the session ended:**
-> Does **LiveKit Cloud agent hosting/deployment** work on the **free tier with no credit card**?
+**Verimor guide's exact values (for the LiveKit-side trunks):**
+- Inbound trunk: name `Verimor Inbound`, direction Inbound, Numbers `90…`, **Allowed address `194.49.126.26`**.
+- Outbound trunk: name `Verimor Outbound`, direction Outbound, Address `sip.verimor.com.tr`,
+  Transport UDP, Numbers `90…`, Username `90…` + Password (from Verimor OİM → Destek →
+  Cihaz Kurulum Sihirbazı → Bilgisayar > Diğer > Ana Sistem → select number).
+- Dispatch rule: type Individual, a room prefix, **Agent name** = our agent, Inbound routing → Trunks → check Verimor.
+- ⚠️ Confirm the exact phone number for LiveKit — guide shows a `90850…` number; the earlier
+  Vapi setup used `+90 212 706 1540`. Verify which number Verimor routed.
 
-- If **yes** → the whole thing runs with nothing on the user's PC and no card:
-  LiveKit Cloud hosts media + agent, Supabase logs, Verimor is the number. Proceed to wire it.
-- If **no** (needs a card/paid) → that's the honest limit; fall back options:
-  (a) keep Vapi for now, (b) find a free agent host that needs no card and isn't the PC.
+## IMMEDIATE NEXT STEP
+**Still-open decision:** where the agent runs. User rule: **nothing on their PC.** So the
+LiveKit agent must be **hosted on LiveKit Cloud** (agent deployment) — verify it's on the
+free tier / no card. If not: keep Vapi, or find a free no-card agent host.
 
-**Next actions once that's answered:**
-1. User signs up **cloud.livekit.io** (Build/free plan) → get Project URL, API Key, API Secret.
-2. Fill `END-TO-END-SIS/agent/.env` (LiveKit keys + Groq/Inworld keys + Supabase service role).
-3. Configure LiveKit **SIP inbound trunk** for `+902127061540` + **dispatch rule** → agent.
-4. In Verimor, re-point the trunk destination from Vapi's gateway to **LiveKit's SIP host**.
-5. **Deploy the agent to LiveKit Cloud** (NOT the user's PC).
-6. First run: expect to fix `@livekit/agents` plugin option names (SDK moves fast — STT/LLM/TTS
+**Remaining actions:**
+1. Get LiveKit **API Key + Secret** (Settings → Keys of project `afiyet-tj1bqfhh`) → into `agent/.env`.
+2. In LiveKit: **create the Inbound SIP trunk** (Numbers + Allowed address `194.49.126.26`).
+3. In LiveKit: **create a Dispatch rule** → Agent name matching `agentName` in `agent/src/agent.ts` (`afiyetsesli`).
+4. **Deploy the agent to LiveKit Cloud** (NOT the user's PC).
+5. First run: expect to fix `@livekit/agents` plugin option names (SDK moves fast — STT/LLM/TTS
    wiring in `agent/src/agent.ts` is best-effort and untested; verify against current docs).
-7. Call `+90 212 706 15 40` → confirm the agent answers in Turkish and the call logs to Supabase.
+6. Call the Verimor number → confirm the agent answers in Turkish and the call logs to Supabase.
+7. (Optional) Outbound trunk for AI-initiated calls, per the guide.
 
 ---
 
