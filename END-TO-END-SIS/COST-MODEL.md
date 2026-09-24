@@ -1,6 +1,6 @@
 # AfiyetSesli — Cost Model & Pricing Estimate
 
-**Last verified:** 2026-08-19
+**Last verified:** 2026-09-11 (LiveKit Cloud pricing added — see §3a)
 **FX rate used:** 1 USD = **47.9 TRY** (spot, 18–19 Aug 2026)
 **Purpose:** Ground-truth the per-minute cost of running an AI voice order-agent for
 Turkish restaurants, compare the managed (Vapi) vs self-hosted architectures, and
@@ -47,6 +47,7 @@ and `llama-3.3-70b-versatile` (17 Jun 2026) → now on `openai/gpt-oss-20b`.
 | **Vapi platform fee** | $0.05 / min (flat, charged even with your own model keys) | [V] | Vapi pricing analyses |
 | **Groq — Llama 3.1 8B Instant (LLM)** | $0.05 / 1M input tok, $0.08 / 1M output tok | [V] | CloudZero / CostBench |
 | **Groq — Whisper Large v3 Turbo (STT)** | $0.04 / hour of audio | [V] | CloudZero |
+| **Inworld STT-1 (streaming)** | *Not yet quoted* | [Q] | — |
 | **Inworld TTS — TTS-1** | $5 / 1M chars | [V] | TextToLab / Inworld |
 | **Inworld TTS — 1.5 Mini** | $15–25 / 1M chars (volume-tiered) | [V] | TextToLab / Inworld |
 | **Inworld TTS — TTS-2 (realtime)** | $25–35 / 1M chars on-demand | [V] | Inworld |
@@ -88,7 +89,62 @@ These are **[E]** engineering estimates for a Turkish restaurant order call:
 - The entire A→B gap ($0.05/min) is **Vapi's platform fee** — pure margin you reclaim by self-hosting the media plane.
 - Telephony ($0.017/min) is a **hard floor**: it is a licensed carrier charge (Verimor) and **cannot be self-hosted away**. This is why Tier C is ~$0.019/min, not lower.
 - Groq STT+LLM is **near-free** (<$0.001/min). It is never the cost problem.
+- **STT was switched to Inworld streaming for latency** (Groq Whisper is batch and
+  puts transcription on the critical path). Inworld's STT rate is **[Q] unquoted**,
+  but since STT is only ~$0.0003/min with Groq, even a 10× rate stays under
+  $0.005/min and cannot change any tier. Flip back with `STT_PROVIDER=groq` if the
+  quote surprises us.
 - TTS (Inworld, $0.010/min) is the largest *reducible* AI cost — self-hosting Piper removes it, worth doing only at high volume.
+
+---
+
+## 3a. What LiveKit Cloud adds (verified 2026-09-11)
+
+Tier B above assumes we self-host the media plane on a ~$8–40/mo VPS
+(~$0.0004/min amortized). We are **not** doing that first — we are using
+**LiveKit Cloud**, because it hosts both the media plane and the agent for
+**$0/mo with no credit card**, which is the binding constraint today.
+
+LiveKit Cloud is free up to a hard cap, then metered:
+
+| LiveKit Cloud (Build plan) | Included free | Overage | Confidence |
+|---|---|---|---|
+| Agent-session minutes | 1,000 / mo (**hard cap**, requests fail — no surprise bill) | $0.01 / min | [V] |
+| Third-party SIP minutes (Verimor) | 1,000 / mo | $0.004 / min | [V] |
+| WebRTC participant minutes | 5,000 / mo | $0.0005 / min | [V] |
+| Concurrent agent sessions | 5 | — | [V] |
+| Agent deployments | 1 | — | [V] |
+| Next tier (**Ship**) | 5,000 agent-min, 20 concurrent | **$50 / mo** | [V] |
+
+**So LiveKit Cloud costs ~$0.014/min once past the free cap** ($0.010 agent +
+$0.004 SIP) [V]. Whether an inbound SIP call also burns WebRTC participant
+minutes is **[Q]** — unverified, but at $0.0005/min it cannot move the result.
+
+### Revised architecture comparison
+
+| Component | **A: Vapi** | **B-LK: LiveKit Cloud** *(what we run now)* | **B: self-hosted media** | **C: self-host media + AI** |
+|---|---|---|---|---|
+| STT + LLM (Groq) | $0.0008 | $0.0008 | $0.0008 | ~$0 |
+| TTS (Inworld) | $0.010 | $0.010 | $0.010 | ~$0 |
+| Telephony (Verimor, bulk est.) | $0.017 | $0.017 | $0.017 | $0.017 |
+| Platform / media plane | $0.050 (Vapi) | **$0.014 (LiveKit)** | ~$0.0004 (VPS) | ~$0.002 (GPU) |
+| **Total per minute** | **~$0.078** | **~$0.042** | **~$0.028** | **~$0.019** |
+
+**What this means**
+1. **LiveKit Cloud cuts the platform fee 3.5× vs Vapi** ($0.050 → $0.014), not to
+   zero. The headline "$0.028/min" is Tier B (self-hosted media) and is **still
+   the target** — it is not what we pay on LiveKit Cloud.
+2. **Below ~1,000 min/mo the platform cost is genuinely $0** (free cap), so the
+   pilot and the first restaurant run at ~$0.028/min all-in. This is the right
+   call for now.
+3. **The Yoğun tier breaks on LiveKit Cloud.** At 5,000 min: $0.042 × 5,000 =
+   **$210/mo COGS**, plus the $50/mo Ship plan → **~$260 against a $190 sell
+   price**. Heavy tenants must move to self-hosted LiveKit (it is open-source,
+   same agent code, same Verimor trunk) — which also resolves the KVKK
+   data-residency question by putting the media plane in Turkey.
+
+**Migration trigger:** when total traffic approaches ~1,000 min/mo, price a
+Turkish VPS and self-host LiveKit rather than upgrading to the Ship plan.
 
 ---
 
@@ -98,6 +154,7 @@ These are **[E]** engineering estimates for a Turkish restaurant order call:
 | Tier | Monthly COGS |
 |---|---|
 | A (Vapi) | ~$39 |
+| B-LK (LiveKit Cloud) | ~$14 — platform portion is **free** under the 1,000-min cap |
 | B (self-host media) | ~$14 |
 | C (full self-host) | ~$9.5 |
 
@@ -105,6 +162,7 @@ These are **[E]** engineering estimates for a Turkish restaurant order call:
 | Tier | Monthly COGS |
 |---|---|
 | A (Vapi) | ~$390 ❌ (exceeds a $200 sell ceiling — **not viable**) |
+| B-LK (LiveKit Cloud) | ~$210 + $50 plan = **~$260** ❌ (also not viable — see §3a) |
 | B (self-host media) | ~$140 |
 | C (full self-host) | ~$95 |
 
@@ -142,8 +200,14 @@ At high volume, **telephony is ~85–90% of COGS** (everything else is self-host
 
 ## 7. Recommended architecture (summary)
 
-**Tier B as the default, Tier C for heavy tenants:**
-- Self-host **only** the jambonz media plane (cheap CPU VPS) — deletes Vapi's $0.05/min tax.
+**Today: Tier B-LK.** LiveKit Cloud's free plan hosts the media plane *and* the
+agent for $0/mo with no credit card, which is the only option that fits the
+current constraints. Good to ~1,000 min/mo, then migrate (§3a).
+
+**Target at volume: Tier B, Tier C for heavy tenants:**
+- Self-host the media plane — **self-hosted LiveKit**, not jambonz, since the
+  agent code is already written against LiveKit and transfers unchanged. Deletes
+  both Vapi's $0.05/min tax and LiveKit Cloud's $0.014/min.
 - Keep **Groq** (STT+LLM) as cheap cloud APIs (near-free, no GPU needed).
 - **Inworld TTS** for small/medium tenants; **Piper (self-hosted)** for Yoğun tenants.
 - **Verimor** SIP trunk for minutes (bulk package).
@@ -169,6 +233,9 @@ At high volume, **telephony is ~85–90% of COGS** (everything else is self-host
   - https://www.verimor.com.tr/kurumsal-tarifemiz/
   - https://www.verimor.com.tr/bulut-santral-sip-trunk/
   - 2019 package sheet (historical bulk reference): https://www.verimor.com.tr/wp-content/uploads/2019/08/Paket-ve-Tarifelerimiz.pdf
+- **LiveKit Cloud pricing & quotas (Build plan free/no card, $0.01/min agent, $0.004/min third-party SIP, Ship $50/mo):**
+  - https://livekit.com/pricing
+  - https://docs.livekit.io/deploy/admin/quotas-and-limits/
 - **Verimor ↔ Vapi AI-agent integration guide:**
   - https://www.verimor.com.tr/makaleler/vapi-verimor-entegrasyonu-ai-ajanlar-icin-numara-ve-sip-altyapisi/
 

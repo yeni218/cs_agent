@@ -1,20 +1,29 @@
-# LiveKit Cloud builds & runs this — the agent runs on LiveKit's infra, NOT your PC.
-FROM node:22-slim
-
-# LiveKit agents / silero VAD need a few native bits.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+# AfiyetSesli agent image — built and run by LiveKit Cloud (`lk agent deploy`).
+# Node 24 runs TypeScript directly, so there is no compile step.
+FROM node:24-slim AS build
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm install
+# Install dependencies first so Docker caches them across code changes.
+COPY package.json package-lock.json ./
+RUN npm ci
 
-COPY . .
-RUN npm run build
-# Pre-download model files (Silero VAD) into the image.
-RUN node dist/agent.js download-files
+# Fetch the Silero VAD model at build time — otherwise the first caller waits
+# for the download while the phone is already ringing.
+RUN npm run download-files
 
-# LiveKit dispatches jobs to this worker; it registers as agent "afiyetsesli".
-CMD ["node", "dist/agent.js", "start"]
+COPY src ./src
+COPY tsconfig.json ./
+
+RUN npm prune --omit=dev
+
+FROM node:24-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Run unprivileged.
+RUN useradd --create-home --uid 10001 afiyet
+COPY --from=build --chown=afiyet:afiyet /app /app
+USER afiyet
+
+# `start` connects out to LiveKit Cloud and waits for calls — no inbound port.
+CMD ["npm", "start"]
