@@ -19,6 +19,7 @@ import {
 import * as inworld from '@livekit/agents-plugin-inworld';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import * as azureTts from './azure-tts.ts';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
 
@@ -33,6 +34,10 @@ const {
   INWORLD_API_KEY,
   INWORLD_TTS_MODEL = 'inworld-tts-1.5-max',
   INWORLD_VOICE = 'Ashley',
+  // Azure TTS — native Turkish neural voice (Inworld has no Turkish voices).
+  AZURE_SPEECH_KEY,
+  AZURE_SPEECH_REGION,
+  AZURE_TTS_VOICE = 'tr-TR-EmelNeural',
   // 'inworld' streams (low latency); 'groq' is batch Whisper (cheaper, slower).
   // Switchable so both can be A/B'd on real Turkish calls.
   STT_PROVIDER = 'inworld',
@@ -113,11 +118,14 @@ export default defineAgent({
         model: assistant?.llmModel ?? GROQ_LLM_MODEL,
         temperature: 0.3,
       }),
-      // TTS: Inworld, via its own plugin (Inworld is not OpenAI-compatible).
-      tts: new inworld.TTS({
-        apiKey: inworldKey,
-        model: INWORLD_TTS_MODEL,
-        voice: assistant?.voice ?? INWORLD_VOICE,
+      // TTS: Azure native Turkish neural voice. Inworld has NO Turkish voices,
+      // so it spoke Turkish with an English accent — Azure's tr-TR-Emel/Ahmet
+      // are trained on Turkish. Per-restaurant override via the Supabase `voice`
+      // field when it names an Azure voice (starts with "tr-TR-").
+      tts: new azureTts.TTS({
+        speechKey: AZURE_SPEECH_KEY,
+        speechRegion: AZURE_SPEECH_REGION,
+        voice: assistant?.voice?.startsWith('tr-TR-') ? assistant.voice : AZURE_TTS_VOICE,
         language: 'tr-TR',
       }),
       turnHandling: {

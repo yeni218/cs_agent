@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dev/demo trust config. This machine runs Norton, which MITM-scans HTTPS and
+  re-signs traffic (incl. the emulator's calls to Supabase) with its own root CA.
+  Android doesn't trust that CA, so requests fail with "Network request failed".
+  We additionally trust the system CAs, any user-installed CAs, and the bundled
+  Norton root (res/raw/norton_ca) so the emulator works on this PC.
+  On a real phone there is no Norton, so the system anchors alone suffice.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+            <certificates src="@raw/norton_ca" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
