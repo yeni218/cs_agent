@@ -20,6 +20,12 @@ FROM node:24-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# TLS root certificates. node:*-slim ships WITHOUT them, which makes
+# @livekit/rtc-node fail to connect to the room ("no native root CA
+# certificates found") and breaks HTTPS to Supabase/Groq/Inworld. Install them.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Run unprivileged.
 RUN useradd --create-home --uid 10001 afiyet
 COPY --from=build --chown=afiyet:afiyet /app /app
